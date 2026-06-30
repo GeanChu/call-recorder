@@ -35,6 +35,9 @@ app.db-*
 .dgclaw/
 .claude/settings.local.json
 
+# Local machine-specific Cargo config (build target redirect, etc.)
+.cargo/config.toml
+
 # OS / editor
 .DS_Store
 Thumbs.db
