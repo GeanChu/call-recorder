@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
@@ -6,9 +6,10 @@ type Tab = "gravar" | "gravacoes" | "transcricao" | "config";
 
 type Recording = {
   id: string;
-  mic_path: string;
-  system_path: string | null;
+  path: string;
+  created_at: number;
   duration_s: number;
+  size_bytes: number;
 };
 
 const TABS: { id: Tab; label: string }[] = [
@@ -21,6 +22,18 @@ const TABS: { id: Tab; label: string }[] = [
 function App() {
   const [tab, setTab] = useState<Tab>("gravar");
   const [recordings, setRecordings] = useState<Recording[]>([]);
+
+  const refresh = useCallback(async () => {
+    try {
+      setRecordings(await invoke<Recording[]>("list_recordings"));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   return (
     <div className="app">
@@ -38,9 +51,7 @@ function App() {
       </nav>
 
       <main className="content">
-        {tab === "gravar" && (
-          <RecordScreen onFinished={(r) => setRecordings((prev) => [r, ...prev])} />
-        )}
+        {tab === "gravar" && <RecordScreen onFinished={refresh} />}
         {tab === "gravacoes" && <RecordingsScreen recordings={recordings} />}
         {tab === "transcricao" && (
           <Placeholder title="Transcrição" hint="Seleção de idioma (padrão pt-BR), texto e copiar (PR5)." />
@@ -53,10 +64,11 @@ function App() {
   );
 }
 
-function RecordScreen({ onFinished }: { onFinished: (r: Recording) => void }) {
+function RecordScreen({ onFinished }: { onFinished: () => void }) {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [level, setLevel] = useState(0);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
@@ -93,21 +105,27 @@ function RecordScreen({ onFinished }: { onFinished: (r: Recording) => void }) {
   async function stop() {
     clearTimers();
     setLevel(0);
+    setBusy(true);
     try {
-      const r = await invoke<Recording>("stop_recording");
-      onFinished(r);
+      await invoke<Recording>("stop_recording");
+      onFinished();
     } catch (e) {
       setError(String(e));
     } finally {
       setRecording(false);
+      setBusy(false);
     }
   }
 
   return (
     <section className="panel record">
       <h2>Gravar</h2>
-      <button className={recording ? "rec-btn stop" : "rec-btn"} onClick={recording ? stop : start}>
-        {recording ? "Parar" : "Gravar"}
+      <button
+        className={recording ? "rec-btn stop" : "rec-btn"}
+        onClick={recording ? stop : start}
+        disabled={busy}
+      >
+        {busy ? "Processando..." : recording ? "Parar" : "Gravar"}
       </button>
 
       {recording && (
@@ -120,7 +138,8 @@ function RecordScreen({ onFinished }: { onFinished: (r: Recording) => void }) {
       )}
 
       <p className="hint">
-        Grava microfone + áudio do sistema (Windows). No Linux/macOS o áudio do sistema chega depois.
+        Grava microfone + áudio do sistema (Windows) e salva como Opus (.ogg) leve. No Linux/macOS o
+        áudio do sistema chega depois.
       </p>
       {error && <p className="error">{error}</p>}
     </section>
@@ -137,9 +156,9 @@ function RecordingsScreen({ recordings }: { recordings: Recording[] }) {
         <ul className="rec-list">
           {recordings.map((r) => (
             <li key={r.id}>
-              <strong>{r.id}</strong> — {r.duration_s.toFixed(1)}s
-              <div className="path">mic: {r.mic_path}</div>
-              {r.system_path && <div className="path">sistema: {r.system_path}</div>}
+              <strong>{formatDate(r.created_at)}</strong> — {formatTime(Math.round(r.duration_s))} ·{" "}
+              {formatSize(r.size_bytes)}
+              <div className="path">{r.path}</div>
             </li>
           ))}
         </ul>
@@ -161,6 +180,15 @@ function formatTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function formatDate(ms: number): string {
+  return new Date(ms).toLocaleString("pt-BR");
 }
 
 export default App;

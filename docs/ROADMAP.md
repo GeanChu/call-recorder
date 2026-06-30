@@ -62,15 +62,15 @@ Cada PR é uma unidade lógica, testável e mergeável. Marque os checkboxes ao 
 
 ---
 
-## PR4 — Encode + storage + UI de gravações
+## PR4 — Encode + storage + UI de gravações ✅ (código; falta teste runtime)
 **Objetivo**: gravações leves e listadas.
-- [ ] ffmpeg sidecar empacotado (download no build).
-- [ ] Mix mic+sistema (`amix`) → encode **Opus `.ogg`** mono ~32 kbps.
-- [ ] SQLite: tabela `recordings`; salvar metadados.
-- [ ] UI: botão Gravar/Parar com tempo + medidor; lista de gravações (data, duração, tamanho).
-- [ ] Tocar/abrir o arquivo.
-
-**Aceite**: gravar→parar gera `.ogg` pequeno, aparece na lista, toca correto.
+- [x] Mix mic+sistema (`amix`) → encode **Opus `.ogg`** mono ~32 kbps, 16 kHz (`encode/mod.rs` chama ffmpeg). WAVs brutos apagados após encode.
+- [x] SQLite (rusqlite bundled): tabela `recordings`; `storage/mod.rs` (open/insert/list).
+- [x] Comandos `stop_recording` (encoda+persiste) e `list_recordings`; UI lista data/duração/tamanho e persiste entre execuções.
+- [x] ffmpeg instalado para dev (winget Gyan.FFmpeg). Compila limpo.
+- [ ] **ffmpeg sidecar empacotado** (download no build) → movido para o PR7 (packaging), pra prod sem instalar nada.
+- [ ] Tocar/abrir o arquivo na UI → PR6.
+- [ ] **Aceite (você)**: gravar→parar gera `.ogg` pequeno, aparece na lista, e continua lá após reabrir o app.
 
 ---
 
