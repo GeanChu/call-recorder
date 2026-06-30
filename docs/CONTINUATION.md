@@ -7,8 +7,8 @@ Documento para a próxima sessão saber exatamente onde paramos e como seguir.
 
 Commits: `git log`. `main` contém até PR4; PR5 na branch `pr5-transcription` (mergear).
 
-### MiniMax (PR5) — pendência
-A chave é a **Subscription Key `sk-cp`** (token-plan), enviada como **Bearer**. O provedor é OpenAI-compatible e configurável na UI (endpoint + modelo + chave). Falta confirmar o **endpoint/modelo de ASR da MiniMax** e se o formato é multipart (igual OpenAI) ou job assíncrono. Ver [MINIMAX.md](MINIMAX.md). Default de fábrica = OpenAI Whisper (caminho que funciona).
+### MiniMax (PR5/PR5b) — confirmado
+STT OpenAI-compatível. Defaults já apontam pra MiniMax: `https://api.minimax.io/v1/audio/transcriptions`, model `MiniMax-ASR`, Bearer `sk-cp`. Áudio agora é **Opus em `.webm`** (MiniMax não aceita `.ogg`). Atenção à **região** da sk-cp (global `api.minimax.io` vs China `api.minimaxi.com` = 401). Ver [MINIMAX.md](MINIMAX.md). Usuário só cola a sk-cp em Configurações e transcreve.
 
 ### ⚠️ Dropbox + build artifacts
 O repo está dentro do Dropbox. Isso trava o build (os error 32, arquivo em uso) porque o Dropbox sincroniza/bloqueia `target/`. Já marcamos `src-tauri/target` e `node_modules` como ignorados pelo Dropbox (stream NTFS `com.dropbox.ignored=1`). Em **outra máquina**, refazer:
