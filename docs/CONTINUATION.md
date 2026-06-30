@@ -3,9 +3,12 @@
 Documento para a próxima sessão saber exatamente onde paramos e como seguir.
 
 ## Onde paramos
-**PR0, PR1, PR2a, PR2b, PR4 concluídos** (PR2b/PR4 = código compilando; falta teste runtime). App grava mic + áudio do sistema (Windows), **mistura e encoda para Opus `.ogg`**, e **persiste a lista em SQLite**. Próximo: **PR5 (transcrição MiniMax)** ou **PR6 (apagar + configurações)**.
+**PR0, PR1, PR2a, PR2b, PR4, PR5 concluídos** (código compilando; falta teste runtime). App grava mic + sistema (Windows) → Opus `.ogg` → SQLite, e **transcreve** via provedor HTTP configurável (chave no keychain, idioma selecionável). Próximo: **PR6 (apagar + tela de Configurações já existe parcialmente)** ou **PR7 (empacotar + ffmpeg sidecar)**.
 
-Commits: `git log`. `main` contém até PR2b; PR4 na branch `pr4-encode-storage` (mergear).
+Commits: `git log`. `main` contém até PR4; PR5 na branch `pr5-transcription` (mergear).
+
+### MiniMax (PR5) — pendência
+A chave é a **Subscription Key `sk-cp`** (token-plan), enviada como **Bearer**. O provedor é OpenAI-compatible e configurável na UI (endpoint + modelo + chave). Falta confirmar o **endpoint/modelo de ASR da MiniMax** e se o formato é multipart (igual OpenAI) ou job assíncrono. Ver [MINIMAX.md](MINIMAX.md). Default de fábrica = OpenAI Whisper (caminho que funciona).
 
 ### ⚠️ Dropbox + build artifacts
 O repo está dentro do Dropbox. Isso trava o build (os error 32, arquivo em uso) porque o Dropbox sincroniza/bloqueia `target/`. Já marcamos `src-tauri/target` e `node_modules` como ignorados pelo Dropbox (stream NTFS `com.dropbox.ignored=1`). Em **outra máquina**, refazer:
@@ -54,11 +57,11 @@ npm run tauri dev    # compila Rust + abre a janela do app
 (Primeira compilação Rust ~4 min; depois é incremental.)
 
 ## Próximo passo imediato — escolher
-**PR5 — Transcrição (MiniMax)** [precisa do endpoint/credencial — ver [MINIMAX.md](MINIMAX.md)]: trait `Transcriber` + `MiniMaxTranscriber` (reqwest); comando `transcribe(id, language)` que pega o `.ogg` da gravação, manda pro provedor, salva o texto (tabela `transcripts`) e devolve. UI: seletor de idioma (padrão pt-BR), exibir texto, botão Copiar. Chave no keychain (crate `keyring`).
+**PR6 — Apagar gravação** [não precisa de credencial]: comando `delete_recording(id)` em `commands` (apaga o arquivo `.ogg` + linha em `recordings` + transcript; helper `storage::delete`), com confirmação na UI (botão na aba Gravações). A tela de Configurações já existe (idioma, endpoint, modelo, chave) — falta o toggle "gravar todos" (placeholder, vira fase 2).
 
-**PR6 — Apagar + Configurações** [não precisa de credencial]: comando `delete_recording` (apaga arquivo + linha no DB, com confirmação na UI); tela de Configurações (idioma padrão, campo da chave da API → keychain, toggle "gravar todos" placeholder). Bom pra fazer enquanto a credencial MiniMax não chega.
+**PR7 — Empacotar** [pra "executável fácil"]: ffmpeg como **sidecar** do Tauri (externalBin `binaries/ffmpeg-<triple>`), pra prod não depender de ffmpeg no PATH (hoje `encode` usa o do PATH/`CALLREC_FFMPEG`). Gerar instaladores (.msi/NSIS, .dmg, .AppImage) não assinados + instruções.
 
-Sugestão: **PR6 primeiro** (independe da MiniMax), depois PR5 quando você passar o endpoint.
+**PR2c (Linux) / PR3 (macOS)** — áudio do sistema nas outras plataformas, quando houver acesso a elas.
 
 ## Reuso do meetily (MIT)
 Repo: https://github.com/Zackriya-Solutions/meetily — pasta `frontend/src-tauri/src/audio/`.

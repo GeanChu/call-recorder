@@ -26,7 +26,15 @@ anyhow = "1"
 cpal = "0.15.3"
 hound = "3.5.1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
+reqwest = { version = "0.13.4", features = ["blocking", "multipart", "json"] }
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.23.0"
+keyring = { version = "4.1.2", default-features = false, features = ["v1", "windows-native-keyring-store"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "4.1.2", default-features = false, features = ["v1", "apple-native-keyring-store"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "4.1.2", default-features = false, features = ["v1", "zbus-secret-service-keyring-store"] }
 

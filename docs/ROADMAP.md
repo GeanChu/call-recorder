@@ -74,16 +74,16 @@ Cada PR é uma unidade lógica, testável e mergeável. Marque os checkboxes ao 
 
 ---
 
-## PR5 — Transcrição (MiniMax) + idioma
+## PR5 — Transcrição + idioma ✅ (código; falta endpoint MiniMax p/ teste real)
 **Objetivo**: transcrever e copiar.
-- [ ] Trait `Transcriber` + `MiniMaxTranscriber` (reqwest).
-- [ ] Seletor de idioma na UI (padrão **pt-BR**).
-- [ ] Chave da API no **keychain** (crate `keyring`); tela para inserir.
-- [ ] Tabela `transcripts`; exibir texto; botão **Copiar**.
-- [ ] Estados: em progresso, erro, concluído.
+- [x] Trait `Transcriber` + provedor `OpenAiCompatible` (multipart, Bearer) — `transcription/mod.rs`. Endpoint + modelo configuráveis na UI.
+- [x] Seletor de idioma (padrão **pt**) na aba Transcrição e idioma padrão em Configurações.
+- [x] Chave da API no **keychain** (crate `keyring`, per-OS); campo password em Configurações (nunca exibida).
+- [x] Tabela `transcripts`; exibir texto; botão **Copiar** (clipboard).
+- [x] Estados em progresso/erro; comando `transcribe` é async + `spawn_blocking` (não trava a UI). Compila limpo.
+- [ ] **Aceite (você)**: configurar endpoint/modelo/chave da MiniMax → transcrever uma gravação → texto pt-BR → Copiar.
 
-**Aceite**: enviar `.ogg`, receber texto pt-BR correto, copiar para o clipboard.
-**Dependência**: endpoint/credencial MiniMax confirmados — ver [MINIMAX.md](MINIMAX.md).
+**Dependência**: confirmar endpoint/modelo de ASR da MiniMax (a chave é a Subscription Key `sk-cp`, enviada como Bearer) — ver [MINIMAX.md](MINIMAX.md). Default de fábrica aponta p/ OpenAI Whisper como caminho que funciona.
 
 ---
 
