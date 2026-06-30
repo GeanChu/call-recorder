@@ -147,6 +147,88 @@ body {
   word-break: break-all;
 }
 
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  max-width: 520px;
+}
+
+.form-row label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+}
+
+.form-row input,
+.form-row select {
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f0f0f;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.actions button {
+  padding: 10px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  background: #396cd8;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actions button.secondary {
+  background: #6b6b6b;
+}
+
+.transcript {
+  width: 100%;
+  max-width: 720px;
+  min-height: 240px;
+  margin-top: 14px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  resize: vertical;
+  background: #fff;
+  color: #0f0f0f;
+}
+
+.ok {
+  color: #2ecc71;
+}
+
+@media (prefers-color-scheme: dark) {
+  .form-row input,
+  .form-row select,
+  .transcript {
+    background: #1f1f1f;
+    color: #f6f6f6;
+    border-color: #444;
+  }
+  .form-row label {
+    color: #bbb;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;

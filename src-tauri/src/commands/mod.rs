@@ -3,11 +3,21 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::audio::recorder::{Recorder, RecordingInfo};
-use crate::storage::{self, RecordingRow};
-use crate::{audio, encode};
+use crate::storage::{self, RecordingRow, TranscriptRow};
+use crate::transcription::{OpenAiCompatible, Transcriber, TranscriptionConfig};
+use crate::{audio, encode, settings};
+
+#[derive(Serialize, Clone)]
+pub struct AppSettings {
+    pub default_language: String,
+    pub endpoint_url: String,
+    pub model: String,
+    pub has_api_key: bool,
+}
 
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<String>, String> {
@@ -54,8 +64,112 @@ pub fn stop_recording(app: AppHandle, recorder: State<Recorder>) -> Result<Recor
 
 #[tauri::command]
 pub fn list_recordings(app: AppHandle) -> Result<Vec<RecordingRow>, String> {
-    let conn = storage::open(&db_path(&app).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let conn = open_db(&app)?;
     storage::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
+    let conn = open_db(&app)?;
+    let cfg = load_config(&conn).map_err(|e| e.to_string())?;
+    let default_language = storage::get_setting(&conn, "default_language")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "pt".to_string());
+    Ok(AppSettings {
+        default_language,
+        endpoint_url: cfg.endpoint_url,
+        model: cfg.model,
+        has_api_key: settings::has_api_key(),
+    })
+}
+
+#[tauri::command]
+pub fn save_settings(
+    app: AppHandle,
+    default_language: String,
+    endpoint_url: String,
+    model: String,
+) -> Result<(), String> {
+    let conn = open_db(&app)?;
+    storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "endpoint_url", &endpoint_url).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "model", &model).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_api_key(key: String) -> Result<(), String> {
+    settings::set_api_key(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn transcribe(
+    app: AppHandle,
+    recording_id: String,
+    language: String,
+) -> Result<TranscriptRow, String> {
+    let lang = if language.trim().is_empty() {
+        "pt".to_string()
+    } else {
+        language
+    };
+
+    // Leituras síncronas no SQLite, sem segurar a conexão durante o await.
+    let (path, provider) = {
+        let conn = open_db(&app)?;
+        let path = storage::recording_path(&conn, &recording_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "gravação não encontrada".to_string())?;
+        let cfg = load_config(&conn).map_err(|e| e.to_string())?;
+        let api_key = settings::get_api_key()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "configure a chave da API nas Configurações".to_string())?;
+        (
+            path,
+            OpenAiCompatible {
+                endpoint_url: cfg.endpoint_url,
+                model: cfg.model,
+                api_key,
+            },
+        )
+    };
+
+    // HTTP bloqueante numa thread de blocking (não trava a UI, não aninha runtime).
+    let lang_http = lang.clone();
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        provider.transcribe(Path::new(&path), &lang_http)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    let row = TranscriptRow {
+        recording_id,
+        language: lang,
+        text,
+        created_at: now_ms(),
+    };
+    let conn = open_db(&app)?;
+    storage::upsert_transcript(&conn, &row).map_err(|e| e.to_string())?;
+    Ok(row)
+}
+
+#[tauri::command]
+pub fn get_transcript(app: AppHandle, recording_id: String) -> Result<Option<TranscriptRow>, String> {
+    let conn = open_db(&app)?;
+    storage::get_transcript(&conn, &recording_id).map_err(|e| e.to_string())
+}
+
+fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+    storage::open(&db_path(app).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+fn load_config(conn: &rusqlite::Connection) -> anyhow::Result<TranscriptionConfig> {
+    let d = TranscriptionConfig::default();
+    Ok(TranscriptionConfig {
+        endpoint_url: storage::get_setting(conn, "endpoint_url")?.unwrap_or(d.endpoint_url),
+        model: storage::get_setting(conn, "model")?.unwrap_or(d.model),
+    })
 }
 
 #[tauri::command]

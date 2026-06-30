@@ -12,6 +12,20 @@ type Recording = {
   size_bytes: number;
 };
 
+type Transcript = {
+  recording_id: string;
+  language: string;
+  text: string;
+  created_at: number;
+};
+
+type Settings = {
+  default_language: string;
+  endpoint_url: string;
+  model: string;
+  has_api_key: boolean;
+};
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "gravar", label: "Gravar" },
   { id: "gravacoes", label: "Gravações" },
@@ -19,11 +33,21 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "config", label: "Configurações" },
 ];
 
+const LANGUAGES: { code: string; label: string }[] = [
+  { code: "pt", label: "Português (BR)" },
+  { code: "en", label: "Inglês" },
+  { code: "es", label: "Espanhol" },
+  { code: "fr", label: "Francês" },
+  { code: "de", label: "Alemão" },
+  { code: "it", label: "Italiano" },
+];
+
 function App() {
   const [tab, setTab] = useState<Tab>("gravar");
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refreshRecordings = useCallback(async () => {
     try {
       setRecordings(await invoke<Recording[]>("list_recordings"));
     } catch {
@@ -31,9 +55,18 @@ function App() {
     }
   }, []);
 
+  const refreshSettings = useCallback(async () => {
+    try {
+      setSettings(await invoke<Settings>("get_settings"));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    refreshRecordings();
+    refreshSettings();
+  }, [refreshRecordings, refreshSettings]);
 
   return (
     <div className="app">
@@ -51,14 +84,16 @@ function App() {
       </nav>
 
       <main className="content">
-        {tab === "gravar" && <RecordScreen onFinished={refresh} />}
+        {tab === "gravar" && <RecordScreen onFinished={refreshRecordings} />}
         {tab === "gravacoes" && <RecordingsScreen recordings={recordings} />}
         {tab === "transcricao" && (
-          <Placeholder title="Transcrição" hint="Seleção de idioma (padrão pt-BR), texto e copiar (PR5)." />
+          <TranscriptionScreen
+            recordings={recordings}
+            defaultLanguage={settings?.default_language ?? "pt"}
+            hasApiKey={settings?.has_api_key ?? false}
+          />
         )}
-        {tab === "config" && (
-          <Placeholder title="Configurações" hint="Idioma padrão, chave da API e 'gravar todos' (PR6)." />
-        )}
+        {tab === "config" && <ConfigScreen settings={settings} onSaved={refreshSettings} />}
       </main>
     </div>
   );
@@ -167,11 +202,199 @@ function RecordingsScreen({ recordings }: { recordings: Recording[] }) {
   );
 }
 
-function Placeholder({ title, hint }: { title: string; hint: string }) {
+function TranscriptionScreen({
+  recordings,
+  defaultLanguage,
+  hasApiKey,
+}: {
+  recordings: Recording[];
+  defaultLanguage: string;
+  hasApiKey: boolean;
+}) {
+  const [selectedId, setSelectedId] = useState("");
+  const [language, setLanguage] = useState(defaultLanguage);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!selectedId && recordings.length > 0) setSelectedId(recordings[0].id);
+  }, [recordings, selectedId]);
+
+  useEffect(() => {
+    setText("");
+    setError(null);
+    if (!selectedId) return;
+    invoke<Transcript | null>("get_transcript", { recordingId: selectedId })
+      .then((t) => {
+        if (t) {
+          setText(t.text);
+          setLanguage(t.language);
+        }
+      })
+      .catch(() => {});
+  }, [selectedId]);
+
+  async function run() {
+    setError(null);
+    setBusy(true);
+    try {
+      const t = await invoke<Transcript>("transcribe", { recordingId: selectedId, language });
+      setText(t.text);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
   return (
     <section className="panel">
-      <h2>{title}</h2>
-      <p className="hint">{hint}</p>
+      <h2>Transcrição</h2>
+      {recordings.length === 0 ? (
+        <p className="hint">Grave algo primeiro na aba Gravar.</p>
+      ) : (
+        <>
+          <div className="form-row">
+            <label>Gravação</label>
+            <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
+              {recordings.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {formatDate(r.created_at)} — {formatTime(Math.round(r.duration_s))}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-row">
+            <label>Idioma</label>
+            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {!hasApiKey && (
+            <p className="hint">Configure a chave da API em Configurações antes de transcrever.</p>
+          )}
+
+          <div className="actions">
+            <button onClick={run} disabled={busy || !selectedId}>
+              {busy ? "Transcrevendo..." : "Transcrever"}
+            </button>
+            {text && (
+              <button className="secondary" onClick={copy}>
+                {copied ? "Copiado!" : "Copiar"}
+              </button>
+            )}
+          </div>
+
+          {error && <p className="error">{error}</p>}
+          {text && <textarea className="transcript" readOnly value={text} />}
+        </>
+      )}
+    </section>
+  );
+}
+
+function ConfigScreen({
+  settings,
+  onSaved,
+}: {
+  settings: Settings | null;
+  onSaved: () => void;
+}) {
+  const [defaultLanguage, setDefaultLanguage] = useState("pt");
+  const [endpointUrl, setEndpointUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settings) {
+      setDefaultLanguage(settings.default_language);
+      setEndpointUrl(settings.endpoint_url);
+      setModel(settings.model);
+    }
+  }, [settings]);
+
+  async function save() {
+    setError(null);
+    setMsg(null);
+    try {
+      await invoke("save_settings", {
+        defaultLanguage,
+        endpointUrl,
+        model,
+      });
+      if (apiKey.trim()) {
+        await invoke("set_api_key", { key: apiKey });
+        setApiKey("");
+      }
+      setMsg("Configurações salvas.");
+      onSaved();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>Configurações</h2>
+
+      <div className="form-row">
+        <label>Idioma padrão</label>
+        <select value={defaultLanguage} onChange={(e) => setDefaultLanguage(e.target.value)}>
+          {LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="form-row">
+        <label>Endpoint de transcrição</label>
+        <input
+          value={endpointUrl}
+          onChange={(e) => setEndpointUrl(e.target.value)}
+          placeholder="https://.../audio/transcriptions"
+        />
+      </div>
+
+      <div className="form-row">
+        <label>Modelo</label>
+        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="whisper-1" />
+      </div>
+
+      <div className="form-row">
+        <label>Chave da API</label>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={settings?.has_api_key ? "•••••• (configurada)" : "cole a chave aqui"}
+        />
+      </div>
+      <p className="hint">A chave é guardada no keychain do sistema, nunca em texto puro.</p>
+
+      <div className="actions">
+        <button onClick={save}>Salvar</button>
+      </div>
+
+      {msg && <p className="ok">{msg}</p>}
+      {error && <p className="error">{error}</p>}
     </section>
   );
 }
