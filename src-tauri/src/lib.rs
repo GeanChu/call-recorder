@@ -16,6 +16,7 @@ pub fn run() {
             commands::list_input_devices,
             commands::start_recording,
             commands::stop_recording,
+            commands::list_recordings,
             commands::recording_level,
             commands::is_recording,
         ])
