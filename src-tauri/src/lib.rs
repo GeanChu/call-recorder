@@ -3,6 +3,7 @@ mod commands;
 mod encode;
 mod settings;
 mod storage;
+mod summary;
 mod transcription;
 
 use audio::recorder::Recorder;
@@ -23,8 +24,11 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::set_api_key,
+            commands::set_summary_key,
             commands::transcribe,
             commands::get_transcript,
+            commands::generate_summary,
+            commands::get_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

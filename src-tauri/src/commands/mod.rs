@@ -8,7 +8,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::audio::recorder::{Recorder, RecordingInfo};
-use crate::storage::{self, RecordingRow, TranscriptRow};
+use crate::storage::{self, RecordingRow, SummaryRow, TranscriptRow};
+use crate::summary::{self, SummaryConfig};
 use crate::transcription::{OpenAiCompatible, Transcriber, TranscriptionConfig};
 use crate::{audio, encode, settings};
 
@@ -18,6 +19,10 @@ pub struct AppSettings {
     pub endpoint_url: String,
     pub model: String,
     pub has_api_key: bool,
+    // Resumo (MiniMax-M3) — opcional.
+    pub summary_endpoint_url: String,
+    pub summary_model: String,
+    pub has_summary_key: bool,
 }
 
 #[tauri::command]
@@ -100,11 +105,15 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     let default_language = storage::get_setting(&conn, "default_language")
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "pt".to_string());
+    let scfg = load_summary_config(&conn).map_err(|e| e.to_string())?;
     Ok(AppSettings {
         default_language,
         endpoint_url: cfg.endpoint_url,
         model: cfg.model,
         has_api_key: settings::has_api_key(),
+        summary_endpoint_url: scfg.endpoint_url,
+        summary_model: scfg.model,
+        has_summary_key: settings::has_summary_key(),
     })
 }
 
@@ -114,17 +123,27 @@ pub fn save_settings(
     default_language: String,
     endpoint_url: String,
     model: String,
+    summary_endpoint_url: String,
+    summary_model: String,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "endpoint_url", &endpoint_url).map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "model", &model).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "summary_endpoint_url", &summary_endpoint_url)
+        .map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "summary_model", &summary_model).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_api_key(key: String) -> Result<(), String> {
     settings::set_api_key(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_summary_key(key: String) -> Result<(), String> {
+    settings::set_summary_key(&key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -245,6 +264,43 @@ pub fn delete_recording(app: AppHandle, recording_id: String) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+pub async fn generate_summary(app: AppHandle, recording_id: String) -> Result<SummaryRow, String> {
+    let (transcript_text, cfg, api_key) = {
+        let conn = open_db(&app)?;
+        let t = storage::get_transcript(&conn, &recording_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "transcreva a gravação antes de resumir".to_string())?;
+        let cfg = load_summary_config(&conn).map_err(|e| e.to_string())?;
+        let api_key = settings::get_summary_key()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "configure a chave do Resumo (MiniMax) nas Configurações".to_string())?;
+        (t.text, cfg, api_key)
+    };
+
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        summary::summarize(&cfg, &api_key, &transcript_text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    let row = SummaryRow {
+        recording_id,
+        text,
+        created_at: now_ms(),
+    };
+    let conn = open_db(&app)?;
+    storage::upsert_summary(&conn, &row).map_err(|e| e.to_string())?;
+    Ok(row)
+}
+
+#[tauri::command]
+pub fn get_summary(app: AppHandle, recording_id: String) -> Result<Option<SummaryRow>, String> {
+    let conn = open_db(&app)?;
+    storage::get_summary(&conn, &recording_id).map_err(|e| e.to_string())
+}
+
 fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     storage::open(&db_path(app).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
@@ -254,6 +310,14 @@ fn load_config(conn: &rusqlite::Connection) -> anyhow::Result<TranscriptionConfi
     Ok(TranscriptionConfig {
         endpoint_url: storage::get_setting(conn, "endpoint_url")?.unwrap_or(d.endpoint_url),
         model: storage::get_setting(conn, "model")?.unwrap_or(d.model),
+    })
+}
+
+fn load_summary_config(conn: &rusqlite::Connection) -> anyhow::Result<SummaryConfig> {
+    let d = SummaryConfig::default();
+    Ok(SummaryConfig {
+        endpoint_url: storage::get_setting(conn, "summary_endpoint_url")?.unwrap_or(d.endpoint_url),
+        model: storage::get_setting(conn, "summary_model")?.unwrap_or(d.model),
     })
 }
 

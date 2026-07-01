@@ -131,10 +131,11 @@ Repo público: github.com/GeanChu/call-recorder. Estratégia de assinatura grát
 - [x] Botão Play/Fechar por gravação na aba Gravações.
 - [ ] **Aceite (você)**: Play toca os dois lados. (Webm/opus toca no WebView2/Win; validar no Mac depois.)
 
-## PR9 — Resumo via MiniMax-M3 (opcional)
-- [ ] Botão "Gerar resumo" por gravação (usa a transcrição). Provider chat-completions OpenAI-compat → `https://api.minimax.io/v1/chat/completions`, model `MiniMax-M3`, Bearer **sk-cp**.
-- [ ] Configurações separadas e rotuladas: **Transcrição** (Groq) vs **Resumo** (MiniMax-M3) — endpoint/modelo/chave próprios; 2 chaves no keychain.
-- [ ] Tabela `summaries`; exibir + copiar.
+## PR9 — Resumo via MiniMax-M3 (opcional) ✅ (código verificado por `cargo check`)
+- [x] `summary/mod.rs`: chat-completions OpenAI-compat (`generate_summary`, async+spawn_blocking) → default `https://api.minimax.io/v1/chat/completions`, `MiniMax-M3`, Bearer sk-cp. Prompt de resumo em pt-BR.
+- [x] Configurações separadas e rotuladas: seção **Transcrição (Groq)** vs **Resumo (MiniMax-M3)** — endpoint/modelo/chave próprios; **2 chaves no keychain** (transcription_api_key + summary_api_key).
+- [x] Tabela `summaries`; botão "Gerar resumo" na aba Transcrição (só habilita com chave configurada) + copiar; delete apaga o resumo junto.
+- [ ] **Aceite (você)**: com a sk-cp configurada em Resumo → transcrever → Gerar resumo → texto do M3.
 
 ## PR10 — Banho de design
 - [ ] Sistema de design leve (tokens de cor/espaço/tipografia), refino de todas as telas + estados vazios, entendendo o fluxo Gravar→Gravações→Transcrição→Config. Sem framework pesado.

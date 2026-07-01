@@ -25,6 +25,15 @@ type Settings = {
   endpoint_url: string;
   model: string;
   has_api_key: boolean;
+  summary_endpoint_url: string;
+  summary_model: string;
+  has_summary_key: boolean;
+};
+
+type Summary = {
+  recording_id: string;
+  text: string;
+  created_at: number;
 };
 
 const TABS: { id: Tab; label: string }[] = [
@@ -94,6 +103,7 @@ function App() {
             recordings={recordings}
             defaultLanguage={settings?.default_language ?? "pt"}
             hasApiKey={settings?.has_api_key ?? false}
+            hasSummaryKey={settings?.has_summary_key ?? false}
           />
         )}
         {tab === "config" && <ConfigScreen settings={settings} onSaved={refreshSettings} />}
@@ -249,10 +259,12 @@ function TranscriptionScreen({
   recordings,
   defaultLanguage,
   hasApiKey,
+  hasSummaryKey,
 }: {
   recordings: Recording[];
   defaultLanguage: string;
   hasApiKey: boolean;
+  hasSummaryKey: boolean;
 }) {
   const [selectedId, setSelectedId] = useState("");
   const [language, setLanguage] = useState(defaultLanguage);
@@ -260,6 +272,10 @@ function TranscriptionScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [sumBusy, setSumBusy] = useState(false);
+  const [sumError, setSumError] = useState<string | null>(null);
+  const [sumCopied, setSumCopied] = useState(false);
 
   useEffect(() => {
     if (!selectedId && recordings.length > 0) setSelectedId(recordings[0].id);
@@ -267,7 +283,9 @@ function TranscriptionScreen({
 
   useEffect(() => {
     setText("");
+    setSummary("");
     setError(null);
+    setSumError(null);
     if (!selectedId) return;
     invoke<Transcript | null>("get_transcript", { recordingId: selectedId })
       .then((t) => {
@@ -275,6 +293,11 @@ function TranscriptionScreen({
           setText(t.text);
           setLanguage(t.language);
         }
+      })
+      .catch(() => {});
+    invoke<Summary | null>("get_summary", { recordingId: selectedId })
+      .then((s) => {
+        if (s) setSummary(s.text);
       })
       .catch(() => {});
   }, [selectedId]);
@@ -296,6 +319,25 @@ function TranscriptionScreen({
     await navigator.clipboard.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function makeSummary() {
+    setSumError(null);
+    setSumBusy(true);
+    try {
+      const s = await invoke<Summary>("generate_summary", { recordingId: selectedId });
+      setSummary(s.text);
+    } catch (e) {
+      setSumError(String(e));
+    } finally {
+      setSumBusy(false);
+    }
+  }
+
+  async function copySummary() {
+    await navigator.clipboard.writeText(summary);
+    setSumCopied(true);
+    window.setTimeout(() => setSumCopied(false), 1500);
   }
 
   return (
@@ -344,6 +386,27 @@ function TranscriptionScreen({
 
           {error && <p className="error">{error}</p>}
           {text && <textarea className="transcript" readOnly value={text} />}
+
+          {text && (
+            <div className="summary-block">
+              <h3>Resumo (opcional)</h3>
+              {!hasSummaryKey && (
+                <p className="hint">Configure a chave do Resumo (MiniMax) em Configurações.</p>
+              )}
+              <div className="actions">
+                <button onClick={makeSummary} disabled={sumBusy || !hasSummaryKey}>
+                  {sumBusy ? "Resumindo..." : summary ? "Refazer resumo" : "Gerar resumo"}
+                </button>
+                {summary && (
+                  <button className="secondary" onClick={copySummary}>
+                    {sumCopied ? "Copiado!" : "Copiar resumo"}
+                  </button>
+                )}
+              </div>
+              {sumError && <p className="error">{sumError}</p>}
+              {summary && <textarea className="transcript" readOnly value={summary} />}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -361,6 +424,9 @@ function ConfigScreen({
   const [endpointUrl, setEndpointUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [summaryEndpointUrl, setSummaryEndpointUrl] = useState("");
+  const [summaryModel, setSummaryModel] = useState("");
+  const [summaryKey, setSummaryKey] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -369,6 +435,8 @@ function ConfigScreen({
       setDefaultLanguage(settings.default_language);
       setEndpointUrl(settings.endpoint_url);
       setModel(settings.model);
+      setSummaryEndpointUrl(settings.summary_endpoint_url);
+      setSummaryModel(settings.summary_model);
     }
   }, [settings]);
 
@@ -380,10 +448,16 @@ function ConfigScreen({
         defaultLanguage,
         endpointUrl,
         model,
+        summaryEndpointUrl,
+        summaryModel,
       });
       if (apiKey.trim()) {
         await invoke("set_api_key", { key: apiKey });
         setApiKey("");
+      }
+      if (summaryKey.trim()) {
+        await invoke("set_summary_key", { key: summaryKey });
+        setSummaryKey("");
       }
       setMsg("Configurações salvas.");
       onSaved();
@@ -407,30 +481,63 @@ function ConfigScreen({
         </select>
       </div>
 
+      <h3 className="cfg-section">Transcrição (Groq / Whisper)</h3>
+      <p className="hint">Converte o áudio da reunião em texto.</p>
       <div className="form-row">
-        <label>Endpoint de transcrição</label>
+        <label>Endpoint</label>
         <input
           value={endpointUrl}
           onChange={(e) => setEndpointUrl(e.target.value)}
-          placeholder="https://.../audio/transcriptions"
+          placeholder="https://api.groq.com/openai/v1/audio/transcriptions"
         />
       </div>
-
       <div className="form-row">
         <label>Modelo</label>
-        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="whisper-1" />
+        <input
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder="whisper-large-v3-turbo"
+        />
       </div>
-
       <div className="form-row">
         <label>Chave da API</label>
         <input
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={settings?.has_api_key ? "•••••• (configurada)" : "cole a chave aqui"}
+          placeholder={settings?.has_api_key ? "•••••• (configurada)" : "cole a chave da transcrição"}
         />
       </div>
-      <p className="hint">A chave é guardada no keychain do sistema, nunca em texto puro.</p>
+
+      <h3 className="cfg-section">Resumo (MiniMax-M3) — opcional</h3>
+      <p className="hint">Gera um resumo da reunião a partir da transcrição. Usa a chave sk-cp da MiniMax.</p>
+      <div className="form-row">
+        <label>Endpoint</label>
+        <input
+          value={summaryEndpointUrl}
+          onChange={(e) => setSummaryEndpointUrl(e.target.value)}
+          placeholder="https://api.minimax.io/v1/chat/completions"
+        />
+      </div>
+      <div className="form-row">
+        <label>Modelo</label>
+        <input
+          value={summaryModel}
+          onChange={(e) => setSummaryModel(e.target.value)}
+          placeholder="MiniMax-M3"
+        />
+      </div>
+      <div className="form-row">
+        <label>Chave da API (sk-cp)</label>
+        <input
+          type="password"
+          value={summaryKey}
+          onChange={(e) => setSummaryKey(e.target.value)}
+          placeholder={settings?.has_summary_key ? "•••••• (configurada)" : "cole a chave do resumo"}
+        />
+      </div>
+
+      <p className="hint">As chaves ficam no keychain do sistema, nunca em texto puro.</p>
 
       <div className="actions">
         <button onClick={save}>Salvar</button>
