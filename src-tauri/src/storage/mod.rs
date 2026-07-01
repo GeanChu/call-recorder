@@ -28,6 +28,13 @@ pub struct TranscriptRow {
     pub created_at: i64,
 }
 
+#[derive(Serialize, Clone)]
+pub struct SummaryRow {
+    pub recording_id: String,
+    pub text: String,
+    pub created_at: i64,
+}
+
 pub fn open(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute(
@@ -56,6 +63,14 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         "CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS summaries (
+            recording_id TEXT PRIMARY KEY,
+            text         TEXT NOT NULL,
+            created_at   INTEGER NOT NULL
         )",
         [],
     )?;
@@ -132,6 +147,31 @@ pub fn get_transcript(conn: &Connection, recording_id: &str) -> Result<Option<Tr
     Ok(row)
 }
 
+pub fn upsert_summary(conn: &Connection, s: &SummaryRow) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO summaries (recording_id, text, created_at) VALUES (?1, ?2, ?3)",
+        params![s.recording_id, s.text, s.created_at],
+    )?;
+    Ok(())
+}
+
+pub fn get_summary(conn: &Connection, recording_id: &str) -> Result<Option<SummaryRow>> {
+    let row = conn
+        .query_row(
+            "SELECT recording_id, text, created_at FROM summaries WHERE recording_id = ?1",
+            params![recording_id],
+            |r| {
+                Ok(SummaryRow {
+                    recording_id: r.get(0)?,
+                    text: r.get(1)?,
+                    created_at: r.get(2)?,
+                })
+            },
+        )
+        .optional()?;
+    Ok(row)
+}
+
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
     let v = conn
         .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| {
@@ -151,6 +191,7 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
 
 /// Remove a gravação e sua transcrição do banco. (Arquivos são apagados no command.)
 pub fn delete_recording(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM summaries WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM transcripts WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM recordings WHERE id = ?1", params![id])?;
     Ok(())

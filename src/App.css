@@ -264,6 +264,30 @@ body {
   color: #2ecc71;
 }
 
+.cfg-section {
+  margin: 24px 0 4px;
+  padding-top: 16px;
+  border-top: 1px solid #e3e3e3;
+  font-size: 15px;
+}
+
+.summary-block {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #e3e3e3;
+}
+
+.summary-block h3 {
+  margin: 0 0 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cfg-section,
+  .summary-block {
+    border-top-color: #3a3a3a;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   .form-row input,
   .form-row select,
