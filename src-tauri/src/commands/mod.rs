@@ -8,10 +8,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::audio::recorder::{Recorder, RecordingInfo};
-use crate::storage::{self, RecordingRow, SummaryRow, TranscriptRow};
+use crate::storage::{self, MeetingRow, RecordingRow, SummaryRow, TranscriptRow};
 use crate::summary::{self, SummaryConfig};
 use crate::transcription::{OpenAiCompatible, Transcriber, TranscriptionConfig};
-use crate::{audio, encode, settings};
+use crate::{audio, encode, meetings, settings};
 
 #[derive(Serialize, Clone)]
 pub struct AppSettings {
@@ -23,6 +23,9 @@ pub struct AppSettings {
     pub summary_endpoint_url: String,
     pub summary_model: String,
     pub has_summary_key: bool,
+    // Calendário (ICS).
+    pub ics_url: String,
+    pub record_all: bool,
 }
 
 #[tauri::command]
@@ -106,6 +109,13 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "pt".to_string());
     let scfg = load_summary_config(&conn).map_err(|e| e.to_string())?;
+    let ics_url = storage::get_setting(&conn, "ics_url")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let record_all = storage::get_setting(&conn, "record_all")
+        .map_err(|e| e.to_string())?
+        .map(|v| v == "1")
+        .unwrap_or(false);
     Ok(AppSettings {
         default_language,
         endpoint_url: cfg.endpoint_url,
@@ -114,6 +124,8 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         summary_endpoint_url: scfg.endpoint_url,
         summary_model: scfg.model,
         has_summary_key: settings::has_summary_key(),
+        ics_url,
+        record_all,
     })
 }
 
@@ -125,6 +137,8 @@ pub fn save_settings(
     model: String,
     summary_endpoint_url: String,
     summary_model: String,
+    ics_url: String,
+    record_all: bool,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
@@ -133,6 +147,9 @@ pub fn save_settings(
     storage::set_setting(&conn, "summary_endpoint_url", &summary_endpoint_url)
         .map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "summary_model", &summary_model).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "ics_url", &ics_url).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "record_all", if record_all { "1" } else { "0" })
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -299,6 +316,50 @@ pub async fn generate_summary(app: AppHandle, recording_id: String) -> Result<Su
 pub fn get_summary(app: AppHandle, recording_id: String) -> Result<Option<SummaryRow>, String> {
     let conn = open_db(&app)?;
     storage::get_summary(&conn, &recording_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_meetings(app: AppHandle) -> Result<Vec<MeetingRow>, String> {
+    let (ics_url, record_all) = {
+        let conn = open_db(&app)?;
+        let url = storage::get_setting(&conn, "ics_url")
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let ra = storage::get_setting(&conn, "record_all")
+            .map_err(|e| e.to_string())?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        (url, ra)
+    };
+    if ics_url.trim().is_empty() {
+        return Err("configure a URL do calendário (ICS) nas Configurações".to_string());
+    }
+
+    let parsed = tauri::async_runtime::spawn_blocking(move || meetings::fetch_and_parse(&ics_url))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+    let conn = open_db(&app)?;
+    for m in &parsed {
+        storage::upsert_meeting(&conn, &m.uid, &m.title, m.starts_at, m.ends_at, record_all)
+            .map_err(|e| e.to_string())?;
+    }
+    let cutoff = now_ms() - 3_600_000; // mantém até 1h após o fim
+    storage::prune_meetings(&conn, cutoff).map_err(|e| e.to_string())?;
+    storage::list_meetings(&conn, cutoff).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_meetings(app: AppHandle) -> Result<Vec<MeetingRow>, String> {
+    let conn = open_db(&app)?;
+    storage::list_meetings(&conn, now_ms() - 3_600_000).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_meeting_record(app: AppHandle, uid: String, enabled: bool) -> Result<(), String> {
+    let conn = open_db(&app)?;
+    storage::set_meeting_record(&conn, &uid, enabled).map_err(|e| e.to_string())
 }
 
 fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {

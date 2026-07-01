@@ -27,6 +27,9 @@ cpal = "0.15.3"
 hound = "3.5.1"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 reqwest = { version = "0.13.4", features = ["blocking", "multipart", "json"] }
+ical = "0.11.0"
+chrono = "0.4.45"
+chrono-tz = "0.10.4"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.23.0"

@@ -35,6 +35,15 @@ pub struct SummaryRow {
     pub created_at: i64,
 }
 
+#[derive(Serialize, Clone)]
+pub struct MeetingRow {
+    pub uid: String,
+    pub title: String,
+    pub starts_at: i64,
+    pub ends_at: i64,
+    pub record_enabled: bool,
+}
+
 pub fn open(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute(
@@ -71,6 +80,16 @@ pub fn open(db_path: &Path) -> Result<Connection> {
             recording_id TEXT PRIMARY KEY,
             text         TEXT NOT NULL,
             created_at   INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS meetings (
+            uid            TEXT PRIMARY KEY,
+            title          TEXT NOT NULL,
+            starts_at      INTEGER NOT NULL,
+            ends_at        INTEGER NOT NULL,
+            record_enabled INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -194,5 +213,59 @@ pub fn delete_recording(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM summaries WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM transcripts WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM recordings WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Insere/atualiza reunião preservando `record_enabled` de reuniões já existentes.
+/// `default_enabled` vale só para reuniões novas (respeita "gravar todas").
+pub fn upsert_meeting(
+    conn: &Connection,
+    uid: &str,
+    title: &str,
+    starts_at: i64,
+    ends_at: i64,
+    default_enabled: bool,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO meetings (uid, title, starts_at, ends_at, record_enabled)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(uid) DO UPDATE SET
+            title = excluded.title, starts_at = excluded.starts_at, ends_at = excluded.ends_at",
+        params![uid, title, starts_at, ends_at, default_enabled as i64],
+    )?;
+    Ok(())
+}
+
+pub fn list_meetings(conn: &Connection, from_ms: i64) -> Result<Vec<MeetingRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT uid, title, starts_at, ends_at, record_enabled
+         FROM meetings WHERE ends_at >= ?1 ORDER BY starts_at ASC",
+    )?;
+    let rows = stmt.query_map([from_ms], |r| {
+        Ok(MeetingRow {
+            uid: r.get(0)?,
+            title: r.get(1)?,
+            starts_at: r.get(2)?,
+            ends_at: r.get(3)?,
+            record_enabled: r.get::<_, i64>(4)? != 0,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn set_meeting_record(conn: &Connection, uid: &str, enabled: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE meetings SET record_enabled = ?2 WHERE uid = ?1",
+        params![uid, enabled as i64],
+    )?;
+    Ok(())
+}
+
+pub fn prune_meetings(conn: &Connection, before_ms: i64) -> Result<()> {
+    conn.execute("DELETE FROM meetings WHERE ends_at < ?1", params![before_ms])?;
     Ok(())
 }
