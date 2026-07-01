@@ -142,8 +142,19 @@ Repo público: github.com/GeanChu/call-recorder. Estratégia de assinatura grát
 - [x] Sidebar com ícones SVG inline + brand; nav com estado ativo; cards nas gravações; botão de gravar em pílula com indicador; medidor com gradiente; forms e seções refinados; estados vazios com ícone.
 - [x] Sem framework (CSS puro). tsc verde; renderiza no preview vite (screenshot travou no ambiente, mas inspects confirmam estilos).
 
-## PR11 — Calendário (era fase 2)
-- [ ] Provider a definir (Google / Outlook / ICS). Listar reuniões + checkbox por reunião p/ habilitar gravação; opção "gravar todos" default; auto-gravar quando a reunião começa.
+## PR11 — Calendário (era fase 2). Provider = **ICS URL** (sem OAuth).
+
+### PR11a — ICS: listar reuniões + habilitar manual ✅ (código verificado por `cargo check`)
+- [x] `meetings/mod.rs`: busca a URL ICS (reqwest), parseia VEVENTs (`ical`), datas com timezone (`chrono`/`chrono-tz`: Z/TZID/naive). RRULE não expandida (v1).
+- [x] storage: tabela `meetings` (upsert preserva `record_enabled`); commands `refresh_meetings`/`list_meetings`/`set_meeting_record`.
+- [x] Config: campo **URL do calendário (ICS)** + toggle **"Gravar todas"**. Aba **Agenda** lista as próximas reuniões com checkbox "Gravar" por reunião.
+- [ ] **Aceite (você)**: colar a URL ICS → Atualizar → ver reuniões → marcar quais gravar.
+
+### PR11b — Auto-gravar + tray + alertas (a fazer)
+- [ ] Ícone na bandeja/status indicando gravação.
+- [ ] Scheduler: auto-**iniciar** gravação na hora de reunião habilitada (app aberto). Parada é **manual**.
+- [ ] Alerta no horário de **fim** recomendando parar; **auto-stop em fim+1h** com aviso.
+- [ ] Notificações via `tauri-plugin-notification`.
 
 ---
 

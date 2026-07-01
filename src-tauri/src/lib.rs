@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod encode;
+mod meetings;
 mod settings;
 mod storage;
 mod summary;
@@ -29,6 +30,9 @@ pub fn run() {
             commands::get_transcript,
             commands::generate_summary,
             commands::get_summary,
+            commands::refresh_meetings,
+            commands::list_meetings,
+            commands::set_meeting_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

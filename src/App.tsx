@@ -2,7 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-type Tab = "gravar" | "gravacoes" | "transcricao" | "config";
+type Tab = "gravar" | "agenda" | "gravacoes" | "transcricao" | "config";
+
+type Meeting = {
+  uid: string;
+  title: string;
+  starts_at: number;
+  ends_at: number;
+  record_enabled: boolean;
+};
 
 type Recording = {
   id: string;
@@ -28,6 +36,8 @@ type Settings = {
   summary_endpoint_url: string;
   summary_model: string;
   has_summary_key: boolean;
+  ics_url: string;
+  record_all: boolean;
 };
 
 type Summary = {
@@ -38,6 +48,7 @@ type Summary = {
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "gravar", label: "Gravar" },
+  { id: "agenda", label: "Agenda" },
   { id: "gravacoes", label: "Gravações" },
   { id: "transcricao", label: "Transcrição" },
   { id: "config", label: "Configurações" },
@@ -82,6 +93,15 @@ function icon(name: string) {
           <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
           <line x1="9" y1="13" x2="15" y2="13" />
           <line x1="9" y1="17" x2="13" y2="17" />
+        </svg>
+      );
+    case "agenda":
+      return (
+        <svg {...c}>
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
         </svg>
       );
     case "config":
@@ -143,6 +163,7 @@ function App() {
 
       <main className="content">
         {tab === "gravar" && <RecordScreen onFinished={refreshRecordings} />}
+        {tab === "agenda" && <AgendaScreen hasIcs={!!settings?.ics_url} />}
         {tab === "gravacoes" && (
           <RecordingsScreen recordings={recordings} onChanged={refreshRecordings} />
         )}
@@ -239,6 +260,77 @@ function RecordScreen({ onFinished }: { onFinished: () => void }) {
         rotula "Você" (mic) e "Participantes" (sistema). No Linux/macOS o áudio do sistema chega depois.
       </p>
       {error && <p className="error">{error}</p>}
+    </section>
+  );
+}
+
+function AgendaScreen({ hasIcs }: { hasIcs: boolean }) {
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<Meeting[]>("list_meetings").then(setMeetings).catch(() => {});
+  }, []);
+
+  async function refresh() {
+    setError(null);
+    setBusy(true);
+    try {
+      setMeetings(await invoke<Meeting[]>("refresh_meetings"));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggle(uid: string, enabled: boolean) {
+    setMeetings((ms) => ms.map((m) => (m.uid === uid ? { ...m, record_enabled: enabled } : m)));
+    try {
+      await invoke("set_meeting_record", { uid, enabled });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <section className="panel">
+      <h2>Agenda</h2>
+      <div className="actions">
+        <button onClick={refresh} disabled={busy}>
+          {busy ? "Atualizando..." : "Atualizar"}
+        </button>
+      </div>
+      {!hasIcs && <p className="hint">Configure a URL do calendário (ICS) em Configurações.</p>}
+      {error && <p className="error">{error}</p>}
+      {meetings.length === 0 ? (
+        <div className="empty">
+          {icon("agenda")}
+          <p>Nenhuma reunião próxima. Clique em Atualizar.</p>
+        </div>
+      ) : (
+        <ul className="rec-list">
+          {meetings.map((m) => (
+            <li key={m.uid}>
+              <div className="rec-row">
+                <div className="rec-meta">
+                  {m.title}
+                  <small>{formatMeetingTime(m.starts_at, m.ends_at)}</small>
+                </div>
+                <label className="chk">
+                  <input
+                    type="checkbox"
+                    checked={m.record_enabled}
+                    onChange={(e) => toggle(m.uid, e.target.checked)}
+                  />
+                  Gravar
+                </label>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -484,6 +576,8 @@ function ConfigScreen({
   const [summaryEndpointUrl, setSummaryEndpointUrl] = useState("");
   const [summaryModel, setSummaryModel] = useState("");
   const [summaryKey, setSummaryKey] = useState("");
+  const [icsUrl, setIcsUrl] = useState("");
+  const [recordAll, setRecordAll] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -494,6 +588,8 @@ function ConfigScreen({
       setModel(settings.model);
       setSummaryEndpointUrl(settings.summary_endpoint_url);
       setSummaryModel(settings.summary_model);
+      setIcsUrl(settings.ics_url);
+      setRecordAll(settings.record_all);
     }
   }, [settings]);
 
@@ -507,6 +603,8 @@ function ConfigScreen({
         model,
         summaryEndpointUrl,
         summaryModel,
+        icsUrl,
+        recordAll,
       });
       if (apiKey.trim()) {
         await invoke("set_api_key", { key: apiKey });
@@ -596,6 +694,25 @@ function ConfigScreen({
 
       <p className="hint">As chaves ficam no keychain do sistema, nunca em texto puro.</p>
 
+      <h3 className="cfg-section">Calendário (agenda)</h3>
+      <p className="hint">URL secreta (ICS) do seu calendário, para listar as próximas reuniões.</p>
+      <div className="form-row">
+        <label>URL do calendário (ICS)</label>
+        <input
+          value={icsUrl}
+          onChange={(e) => setIcsUrl(e.target.value)}
+          placeholder="https://calendar.google.com/.../basic.ics"
+        />
+      </div>
+      <label className="chk">
+        <input
+          type="checkbox"
+          checked={recordAll}
+          onChange={(e) => setRecordAll(e.target.checked)}
+        />
+        Gravar todas as reuniões por padrão
+      </label>
+
       <div className="actions">
         <button onClick={save}>Salvar</button>
       </div>
@@ -619,6 +736,14 @@ function formatSize(bytes: number): string {
 
 function formatDate(ms: number): string {
   return new Date(ms).toLocaleString("pt-BR");
+}
+
+function formatMeetingTime(start: number, end: number): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  const day = s.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+  const t = (d: Date) => d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `${day}, ${t(s)}–${t(e)}`;
 }
 
 export default App;

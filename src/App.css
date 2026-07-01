@@ -428,6 +428,23 @@ button {
   font-weight: 700;
 }
 
+.chk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  margin: 8px 0;
+}
+
+.chk input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* ---- Empty state ---- */
 .empty {
   display: flex;
