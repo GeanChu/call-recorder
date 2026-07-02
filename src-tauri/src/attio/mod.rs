@@ -82,9 +82,10 @@ fn meeting_from_value(v: &serde_json::Value) -> Option<AttioMeeting> {
 
 /// Lista meetings que têm ao menos um dos emails como participante.
 pub fn list_meetings(key: &str, emails: &[String]) -> Result<Vec<AttioMeeting>> {
+    let joined = emails.join(",");
     let mut params: Vec<(&str, &str)> = vec![("limit", "25")];
-    for e in emails {
-        params.push(("participants", e.as_str()));
+    if !joined.is_empty() {
+        params.push(("participants", joined.as_str()));
     }
     let url = reqwest::Url::parse_with_params(&format!("{BASE}/meetings"), &params)
         .map_err(|e| anyhow!("Attio: URL inválida: {e}"))?;
