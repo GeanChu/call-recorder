@@ -210,6 +210,14 @@ pub fn set_attio_key(key: String) -> Result<(), String> {
     settings::set_attio_key(&key).map_err(|e| e.to_string())
 }
 
+/// Diagnóstico: testa a conectividade com o Attio de dentro do processo do app.
+#[tauri::command]
+pub async fn attio_selftest() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(crate::net::attio_selftest)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Lista meetings do Attio com ao menos um dos emails como participante.
 #[tauri::command]
 pub async fn attio_find_meetings(emails: Vec<String>) -> Result<Vec<AttioMeeting>, String> {

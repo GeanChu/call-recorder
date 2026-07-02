@@ -826,6 +826,7 @@ function ConfigScreen({
   const [summaryModel, setSummaryModel] = useState("");
   const [summaryKey, setSummaryKey] = useState("");
   const [attioKey, setAttioKey] = useState("");
+  const [attioTest, setAttioTest] = useState<string | null>(null);
   const [icsUrl, setIcsUrl] = useState("");
   const [recordAll, setRecordAll] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -981,7 +982,21 @@ function ConfigScreen({
 
       <div className="actions">
         <button onClick={save}>Salvar</button>
+        <button
+          className="secondary"
+          onClick={async () => {
+            setAttioTest("Testando...");
+            try {
+              setAttioTest(await invoke<string>("attio_selftest"));
+            } catch (e) {
+              setAttioTest(String(e));
+            }
+          }}
+        >
+          Testar conexão Attio
+        </button>
       </div>
+      {attioTest && <pre className="attio-test">{attioTest}</pre>}
 
       {msg && <p className="ok">{msg}</p>}
       {error && <p className="error">{error}</p>}

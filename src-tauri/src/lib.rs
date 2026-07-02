@@ -61,6 +61,7 @@ pub fn run() {
             commands::list_meetings,
             commands::set_meeting_record,
             commands::set_attio_key,
+            commands::attio_selftest,
             commands::attio_find_meetings,
             commands::attio_upload,
         ])
