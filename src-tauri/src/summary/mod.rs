@@ -35,12 +35,7 @@ pub fn summarize(cfg: &SummaryConfig, api_key: &str, transcript: &str) -> Result
         ]
     });
 
-    let resp = reqwest::blocking::Client::builder()
-        .use_native_tls()
-        .no_proxy()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    let resp = crate::net::client(180)
         .post(&cfg.endpoint_url)
         .bearer_auth(api_key)
         .json(&body)

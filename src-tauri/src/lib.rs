@@ -3,6 +3,7 @@ mod audio;
 mod commands;
 mod encode;
 mod meetings;
+mod net;
 mod scheduler;
 mod settings;
 mod storage;
