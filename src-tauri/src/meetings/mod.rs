@@ -24,7 +24,11 @@ pub struct Meeting {
 }
 
 pub fn fetch_and_parse(ics_url: &str) -> Result<Vec<Meeting>> {
-    let body = reqwest::blocking::Client::new()
+    let body = reqwest::blocking::Client::builder()
+        .use_native_tls()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
         .get(ics_url)
         .send()
         .map_err(|e| anyhow!("falha ao buscar o ICS: {e}"))?

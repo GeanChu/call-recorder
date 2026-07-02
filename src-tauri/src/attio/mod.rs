@@ -23,7 +23,11 @@ pub struct AttioMeeting {
 }
 
 fn client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::new()
+    reqwest::blocking::Client::builder()
+        .use_native_tls()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
 }
 
 fn get_json(key: &str, url: reqwest::Url) -> Result<serde_json::Value> {

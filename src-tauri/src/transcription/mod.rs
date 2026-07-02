@@ -55,7 +55,11 @@ impl Transcriber for OpenAiCompatible {
             .file("file", audio_path)
             .map_err(|e| anyhow!("falha ao anexar o áudio: {e}"))?;
 
-        let resp = reqwest::blocking::Client::new()
+        let resp = reqwest::blocking::Client::builder()
+            .use_native_tls()
+            .timeout(std::time::Duration::from_secs(180))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
             .post(&self.endpoint_url)
             .bearer_auth(&self.api_key)
             .multipart(form)
