@@ -111,6 +111,7 @@ pub fn list_meetings(
     ends_from: &str,
     starts_before: &str,
     timezone: &str,
+    user_email: Option<&str>,
     emails: &[String],
 ) -> Result<Vec<AttioMeeting>> {
     let params: Vec<(&str, &str)> = vec![
@@ -128,7 +129,12 @@ pub fn list_meetings(
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default();
-    let all: Vec<AttioMeeting> = arr.iter().filter_map(meeting_from_value).collect();
+    let mut all: Vec<AttioMeeting> = arr.iter().filter_map(meeting_from_value).collect();
+
+    // Filtro forte: só reuniões onde o usuário do Attio participa.
+    if let Some(u) = user_email.map(str::to_lowercase).filter(|u| !u.is_empty()) {
+        all.retain(|m| m.participants.iter().any(|p| p.to_lowercase() == u));
+    }
 
     if emails.is_empty() {
         return Ok(all);

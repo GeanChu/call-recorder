@@ -40,6 +40,7 @@ type Settings = {
   ics_url: string;
   record_all: boolean;
   has_attio_key: boolean;
+  attio_user_email: string;
 };
 
 type AttioMeeting = {
@@ -870,6 +871,7 @@ function ConfigScreen({
   const [summaryModel, setSummaryModel] = useState("");
   const [summaryKey, setSummaryKey] = useState("");
   const [attioKey, setAttioKey] = useState("");
+  const [attioUserEmail, setAttioUserEmail] = useState("");
   const [attioTest, setAttioTest] = useState<string | null>(null);
   const [attioTestEmails, setAttioTestEmails] = useState("");
   const [icsUrl, setIcsUrl] = useState("");
@@ -886,6 +888,7 @@ function ConfigScreen({
       setSummaryModel(settings.summary_model);
       setIcsUrl(settings.ics_url);
       setRecordAll(settings.record_all);
+      setAttioUserEmail(settings.attio_user_email);
     }
   }, [settings]);
 
@@ -901,6 +904,7 @@ function ConfigScreen({
         summaryModel,
         icsUrl,
         recordAll,
+        attioUserEmail,
       });
       if (apiKey.trim()) {
         await invoke("set_api_key", { key: apiKey });
@@ -1015,6 +1019,16 @@ function ConfigScreen({
 
       <h3 className="cfg-section">Attio (CRM)</h3>
       <p className="hint">Sobe transcrição/resumo como nota na meeting do Attio. Chave em Attio → Settings → Developers → API tokens.</p>
+      <div className="form-row">
+        <label>Seu email no Attio</label>
+        <input
+          type="email"
+          value={attioUserEmail}
+          onChange={(e) => setAttioUserEmail(e.target.value)}
+          placeholder="voce@hi.capital"
+        />
+        <span className="hint">Filtra as reuniões sugeridas às que você participa.</span>
+      </div>
       <div className="form-row">
         <label>Chave da API (Attio)</label>
         <input

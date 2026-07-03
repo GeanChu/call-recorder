@@ -29,6 +29,8 @@ pub struct AppSettings {
     pub record_all: bool,
     // Attio (CRM).
     pub has_attio_key: bool,
+    /// Email do usuário no Attio — filtra reuniões sugeridas às que ele participa.
+    pub attio_user_email: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -157,6 +159,9 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         .map_err(|e| e.to_string())?
         .map(|v| v == "1")
         .unwrap_or(false);
+    let attio_user_email = storage::get_setting(&conn, "attio_user_email")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
     Ok(AppSettings {
         default_language,
         endpoint_url: cfg.endpoint_url,
@@ -168,6 +173,7 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         ics_url,
         record_all,
         has_attio_key: settings::has_attio_key(),
+        attio_user_email,
     })
 }
 
@@ -181,6 +187,7 @@ pub fn save_settings(
     summary_model: String,
     ics_url: String,
     record_all: bool,
+    attio_user_email: String,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
@@ -191,6 +198,8 @@ pub fn save_settings(
     storage::set_setting(&conn, "summary_model", &summary_model).map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "ics_url", &ics_url).map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "record_all", if record_all { "1" } else { "0" })
+        .map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "attio_user_email", attio_user_email.trim())
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -224,6 +233,7 @@ pub async fn attio_selftest(emails: Vec<String>) -> Result<String, String> {
 /// Lista meetings do Attio numa janela de tempo, casando emails no cliente.
 #[tauri::command]
 pub async fn attio_find_meetings(
+    app: AppHandle,
     ends_from: String,
     starts_before: String,
     timezone: String,
@@ -232,8 +242,19 @@ pub async fn attio_find_meetings(
     let key = settings::get_attio_key()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "configure a chave do Attio nas Configurações".to_string())?;
+    let user_email = {
+        let conn = open_db(&app)?;
+        storage::get_setting(&conn, "attio_user_email")
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default()
+    };
     tauri::async_runtime::spawn_blocking(move || {
-        attio::list_meetings(&key, &ends_from, &starts_before, &timezone, &emails)
+        let ue = if user_email.trim().is_empty() {
+            None
+        } else {
+            Some(user_email.trim())
+        };
+        attio::list_meetings(&key, &ends_from, &starts_before, &timezone, ue, &emails)
     })
     .await
     .map_err(|e| e.to_string())?
