@@ -52,6 +52,11 @@ pub struct MeetingRow {
 
 pub fn open(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
+    // Várias conexões concorrem (comandos, scheduler, refresh no boot).
+    // WAL permite leitura+escrita simultâneas; busy_timeout faz o escritor
+    // esperar em vez de falhar com "database is locked".
+    conn.busy_timeout(std::time::Duration::from_secs(10))?;
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
     conn.execute(
         "CREATE TABLE IF NOT EXISTS recordings (
             id          TEXT PRIMARY KEY,

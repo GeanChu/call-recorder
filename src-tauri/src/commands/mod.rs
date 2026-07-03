@@ -774,10 +774,15 @@ fn db_path(app: &AppHandle) -> anyhow::Result<PathBuf> {
 
 /// Caminho do ffmpeg: resource empacotado (prod) ou PATH/CALLREC_FFMPEG (dev).
 fn resolve_ffmpeg(app: &AppHandle) -> String {
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    if let Ok(p) = app.path().resolve(name, tauri::path::BaseDirectory::Resource) {
-        if p.exists() {
-            return p.to_string_lossy().into_owned();
+    let bin = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    // O glob `resources/*` do bundle preserva a subpasta, então o binário
+    // fica em `<resource_dir>/resources/ffmpeg[.exe]`. Tenta esse caminho e,
+    // por robustez, também a raiz do resource dir.
+    for cand in [format!("resources/{bin}"), bin.to_string()] {
+        if let Ok(p) = app.path().resolve(&cand, tauri::path::BaseDirectory::Resource) {
+            if p.exists() {
+                return p.to_string_lossy().into_owned();
+            }
         }
     }
     std::env::var("CALLREC_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
