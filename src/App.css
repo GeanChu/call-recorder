@@ -107,6 +107,14 @@ body {
   font-weight: 600;
 }
 
+/* Engrenagem de Configurações no rodapé da sidebar. */
+.nav-item.gear {
+  margin-top: auto;
+  width: 40px;
+  justify-content: center;
+  padding: 10px;
+}
+
 .content {
   flex: 1;
   padding: 40px 44px;
@@ -266,8 +274,64 @@ body {
 
 .rec-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.kebab-wrap {
+  position: relative;
+}
+
+.kebab-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.kebab-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.kebab-menu {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  z-index: 10;
+  min-width: 140px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kebab-menu button {
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kebab-menu button:hover {
+  background: var(--surface-2);
+}
+
+.kebab-menu button.danger {
+  color: var(--danger);
 }
 
 .player {

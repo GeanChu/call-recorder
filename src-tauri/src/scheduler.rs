@@ -64,7 +64,7 @@ fn tick(app: &AppHandle, triggered: &mut HashSet<String>) {
         if now >= m.starts_at && now < m.ends_at && !triggered.contains(&m.uid) {
             triggered.insert(m.uid.clone());
             if record_all || m.record_enabled {
-                if commands::start_recording_for_meeting_core(app, m.ends_at).is_ok() {
+                if commands::start_recording_for_meeting_core(app, m.ends_at, &m.title).is_ok() {
                     notify(
                         app,
                         "Gravação iniciada automaticamente",

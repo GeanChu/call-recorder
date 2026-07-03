@@ -11,6 +11,8 @@ use serde::Serialize;
 #[derive(Serialize, Clone)]
 pub struct RecordingRow {
     pub id: String,
+    /// Nome da reunião que gerou a gravação, ou "Gravação manual".
+    pub title: String,
     /// Faixa do microfone ("Você").
     pub path: String,
     /// Faixa do áudio do sistema ("Participantes"), se houver.
@@ -63,6 +65,10 @@ pub fn open(db_path: &Path) -> Result<Connection> {
     )?;
     // Migração de bancos antigos (sem a coluna). Erro = coluna já existe → ignora.
     let _ = conn.execute("ALTER TABLE recordings ADD COLUMN system_path TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE recordings ADD COLUMN title TEXT NOT NULL DEFAULT 'Gravação manual'",
+        [],
+    );
     conn.execute(
         "CREATE TABLE IF NOT EXISTS transcripts (
             recording_id TEXT PRIMARY KEY,
@@ -109,26 +115,27 @@ pub fn open(db_path: &Path) -> Result<Connection> {
 
 pub fn insert(conn: &Connection, r: &RecordingRow) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO recordings (id, path, system_path, created_at, duration_s, size_bytes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![r.id, r.path, r.system_path, r.created_at, r.duration_s, r.size_bytes],
+        "INSERT OR REPLACE INTO recordings (id, title, path, system_path, created_at, duration_s, size_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![r.id, r.title, r.path, r.system_path, r.created_at, r.duration_s, r.size_bytes],
     )?;
     Ok(())
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<RecordingRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, path, system_path, created_at, duration_s, size_bytes
+        "SELECT id, title, path, system_path, created_at, duration_s, size_bytes
          FROM recordings ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(RecordingRow {
             id: row.get(0)?,
-            path: row.get(1)?,
-            system_path: row.get(2)?,
-            created_at: row.get(3)?,
-            duration_s: row.get(4)?,
-            size_bytes: row.get(5)?,
+            title: row.get(1)?,
+            path: row.get(2)?,
+            system_path: row.get(3)?,
+            created_at: row.get(4)?,
+            duration_s: row.get(5)?,
+            size_bytes: row.get(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -136,6 +143,14 @@ pub fn list(conn: &Connection) -> Result<Vec<RecordingRow>> {
         out.push(r?);
     }
     Ok(out)
+}
+
+pub fn rename_recording(conn: &Connection, id: &str, title: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE recordings SET title = ?2 WHERE id = ?1",
+        params![id, title],
+    )?;
+    Ok(())
 }
 
 /// Caminhos das faixas de uma gravação: (microfone, áudio do sistema opcional).

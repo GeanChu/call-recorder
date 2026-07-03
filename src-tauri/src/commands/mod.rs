@@ -33,6 +33,8 @@ pub struct AppSettings {
     pub attio_user_email: String,
     /// Tema da UI: "system" | "light" | "dark".
     pub theme: String,
+    /// Sincronizar a agenda automaticamente ao abrir o app.
+    pub auto_sync_agenda: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -63,7 +65,7 @@ pub fn start_recording_core(app: &AppHandle) -> Result<RecordingInfo, String> {
     let dir = recordings_dir(app).map_err(|e| e.to_string())?;
     let info = app
         .state::<Recorder>()
-        .start(dir, new_id(), None)
+        .start(dir, new_id(), None, "Gravação manual".to_string())
         .map_err(|e| e.to_string())?;
     let _ = app.emit("recording-changed", true);
     Ok(info)
@@ -73,11 +75,17 @@ pub fn start_recording_core(app: &AppHandle) -> Result<RecordingInfo, String> {
 pub fn start_recording_for_meeting_core(
     app: &AppHandle,
     meeting_end_ms: i64,
+    title: &str,
 ) -> Result<RecordingInfo, String> {
     let dir = recordings_dir(app).map_err(|e| e.to_string())?;
+    let title = if title.trim().is_empty() {
+        "Reunião".to_string()
+    } else {
+        title.to_string()
+    };
     let info = app
         .state::<Recorder>()
-        .start(dir, new_id(), Some(meeting_end_ms))
+        .start(dir, new_id(), Some(meeting_end_ms), title)
         .map_err(|e| e.to_string())?;
     let _ = app.emit("recording-changed", true);
     Ok(info)
@@ -85,8 +93,12 @@ pub fn start_recording_for_meeting_core(
 
 /// Inicia gravação de uma reunião a partir do toast de alerta.
 #[tauri::command]
-pub fn start_meeting_recording(app: AppHandle, end_ms: i64) -> Result<RecordingInfo, String> {
-    start_recording_for_meeting_core(&app, end_ms)
+pub fn start_meeting_recording(
+    app: AppHandle,
+    end_ms: i64,
+    title: String,
+) -> Result<RecordingInfo, String> {
+    start_recording_for_meeting_core(&app, end_ms, &title)
 }
 
 pub fn stop_recording_core(app: &AppHandle) -> Result<RecordingRow, String> {
@@ -133,6 +145,7 @@ pub fn stop_recording_core(app: &AppHandle) -> Result<RecordingRow, String> {
 
     let row = RecordingRow {
         id: res.id,
+        title: res.title,
         path: mic_out.to_string_lossy().into_owned(),
         system_path,
         created_at: now_ms(),
@@ -144,6 +157,17 @@ pub fn stop_recording_core(app: &AppHandle) -> Result<RecordingRow, String> {
     storage::insert(&conn, &row).map_err(|e| e.to_string())?;
     let _ = app.emit("recording-changed", false);
     Ok(row)
+}
+
+/// Renomeia uma gravação.
+#[tauri::command]
+pub fn rename_recording(app: AppHandle, recording_id: String, title: String) -> Result<(), String> {
+    let t = title.trim();
+    if t.is_empty() {
+        return Err("o nome não pode ser vazio".to_string());
+    }
+    let conn = open_db(&app)?;
+    storage::rename_recording(&conn, &recording_id, t).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -173,6 +197,11 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     let theme = storage::get_setting(&conn, "theme")
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "system".to_string());
+    // Default habilitado: só desliga se estiver explicitamente "0".
+    let auto_sync_agenda = storage::get_setting(&conn, "auto_sync_agenda")
+        .map_err(|e| e.to_string())?
+        .map(|v| v != "0")
+        .unwrap_or(true);
     Ok(AppSettings {
         default_language,
         endpoint_url: cfg.endpoint_url,
@@ -186,6 +215,7 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         has_attio_key: settings::has_attio_key(),
         attio_user_email,
         theme,
+        auto_sync_agenda,
     })
 }
 
@@ -201,6 +231,7 @@ pub fn save_settings(
     record_all: bool,
     attio_user_email: String,
     theme: String,
+    auto_sync_agenda: bool,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
@@ -215,6 +246,8 @@ pub fn save_settings(
     storage::set_setting(&conn, "attio_user_email", attio_user_email.trim())
         .map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "theme", &theme).map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "auto_sync_agenda", if auto_sync_agenda { "1" } else { "0" })
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

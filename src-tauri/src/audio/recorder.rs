@@ -18,6 +18,7 @@ type TrackHandle = JoinHandle<Result<RecordedTrack>>;
 
 struct ActiveSession {
     id: String,
+    title: String,
     stop: Arc<AtomicBool>,
     mic_handle: TrackHandle,
     system_handle: Option<TrackHandle>,
@@ -43,6 +44,7 @@ pub struct RecordingInfo {
 #[derive(Serialize, Clone)]
 pub struct RecordingResult {
     pub id: String,
+    pub title: String,
     pub mic_path: String,
     pub system_path: Option<String>,
     pub duration_s: f64,
@@ -87,6 +89,7 @@ impl Recorder {
         recordings_dir: PathBuf,
         id: String,
         meeting_end_ms: Option<i64>,
+        title: String,
     ) -> Result<RecordingInfo> {
         let mut guard = self.inner.lock().unwrap();
         if guard.is_some() {
@@ -106,6 +109,7 @@ impl Recorder {
 
         *guard = Some(ActiveSession {
             id: id.clone(),
+            title,
             stop,
             mic_handle,
             system_handle,
@@ -176,6 +180,7 @@ impl Recorder {
 
         Ok(RecordingResult {
             id: session.id,
+            title: session.title,
             mic_path: mic_track.path.to_string_lossy().into_owned(),
             system_path,
             duration_s,

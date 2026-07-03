@@ -19,6 +19,7 @@ type Meeting = {
 
 type Recording = {
   id: string;
+  title: string;
   path: string;
   system_path: string | null;
   created_at: number;
@@ -46,6 +47,7 @@ type Settings = {
   has_attio_key: boolean;
   attio_user_email: string;
   theme: string;
+  auto_sync_agenda: boolean;
 };
 
 type AttioMeeting = {
@@ -66,7 +68,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "agenda", label: "Home" },
   { id: "gravacoes", label: "Gravações" },
   { id: "transcricao", label: "Transcrição" },
-  { id: "config", label: "Configurações" },
 ];
 
 const LANGUAGES: { code: string; label: string }[] = [
@@ -307,6 +308,14 @@ function App() {
             {t.label}
           </button>
         ))}
+        <button
+          className={tab === "config" ? "nav-item gear active" : "nav-item gear"}
+          onClick={() => setTab("config")}
+          title="Configurações"
+          aria-label="Configurações"
+        >
+          {icon("config")}
+        </button>
       </nav>
 
       <main className="content">
@@ -314,6 +323,7 @@ function App() {
           <HomeScreen
             hasIcs={!!settings?.ics_url}
             recordAll={settings?.record_all ?? false}
+            autoSync={settings?.auto_sync_agenda ?? true}
             onFinished={refreshRecordings}
           />
         )}
@@ -389,7 +399,7 @@ function MeetingAlert() {
   async function record() {
     setBusy(true);
     try {
-      await invoke("start_meeting_recording", { endMs });
+      await invoke("start_meeting_recording", { endMs, title });
       await close();
     } catch {
       setBusy(false);
@@ -421,16 +431,18 @@ function MeetingAlert() {
 function HomeScreen({
   hasIcs,
   recordAll,
+  autoSync,
   onFinished,
 }: {
   hasIcs: boolean;
   recordAll: boolean;
+  autoSync: boolean;
   onFinished: () => void;
 }) {
   return (
     <section className="panel">
       <RecordBar onFinished={onFinished} />
-      <AgendaList hasIcs={hasIcs} recordAll={recordAll} />
+      <AgendaList hasIcs={hasIcs} recordAll={recordAll} autoSync={autoSync} />
     </section>
   );
 }
@@ -547,7 +559,15 @@ function RecordBar({ onFinished }: { onFinished: () => void }) {
   );
 }
 
-function AgendaList({ hasIcs, recordAll }: { hasIcs: boolean; recordAll: boolean }) {
+function AgendaList({
+  hasIcs,
+  recordAll,
+  autoSync,
+}: {
+  hasIcs: boolean;
+  recordAll: boolean;
+  autoSync: boolean;
+}) {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -562,13 +582,13 @@ function AgendaList({ hasIcs, recordAll }: { hasIcs: boolean; recordAll: boolean
     };
   }, []);
 
-  // Ao abrir a Home com ICS configurado, tenta atualizar sozinho (1x).
+  // Ao abrir a Home com ICS configurado e auto-sync ligado, atualiza 1x.
   useEffect(() => {
-    if (hasIcs && !autoRefreshed.current) {
+    if (hasIcs && autoSync && !autoRefreshed.current) {
       autoRefreshed.current = true;
       invoke<Meeting[]>("refresh_meetings").then(setMeetings).catch(() => {});
     }
-  }, [hasIcs]);
+  }, [hasIcs, autoSync]);
 
   async function refresh() {
     setError(null);
@@ -664,12 +684,34 @@ function RecordingsScreen({
   onChanged: () => void;
 }) {
   const [playing, setPlaying] = useState<string | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
+
+  // Fecha o menu kebab ao clicar fora.
+  useEffect(() => {
+    if (!menuId) return;
+    const close = () => setMenuId(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menuId]);
 
   async function remove(id: string) {
+    setMenuId(null);
     if (!window.confirm("Apagar esta gravação e sua transcrição? Não dá pra desfazer.")) return;
     try {
       await invoke("delete_recording", { recordingId: id });
       if (playing === id) setPlaying(null);
+      onChanged();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
+  async function rename(r: Recording) {
+    setMenuId(null);
+    const title = window.prompt("Novo nome da gravação:", r.title);
+    if (title === null || !title.trim()) return;
+    try {
+      await invoke("rename_recording", { recordingId: r.id, title: title.trim() });
       onChanged();
     } catch (e) {
       alert(String(e));
@@ -694,9 +736,10 @@ function RecordingsScreen({
             <li key={r.id}>
               <div className="rec-row">
                 <div className="rec-meta">
-                  {formatDate(r.created_at)}
+                  {r.title}
                   <small>
-                    {formatTime(Math.round(r.duration_s))} · {formatSize(r.size_bytes)}
+                    {formatDate(r.created_at)} · {formatTime(Math.round(r.duration_s))} ·{" "}
+                    {formatSize(r.size_bytes)}
                   </small>
                 </div>
                 <div className="rec-actions">
@@ -706,9 +749,26 @@ function RecordingsScreen({
                   >
                     {playing === r.id ? "Fechar" : "▶ Play"}
                   </button>
-                  <button className="del-btn" onClick={() => remove(r.id)}>
-                    Apagar
-                  </button>
+                  <div className="kebab-wrap">
+                    <button
+                      className="kebab-btn"
+                      aria-label="Mais ações"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuId(menuId === r.id ? null : r.id);
+                      }}
+                    >
+                      ⋮
+                    </button>
+                    {menuId === r.id && (
+                      <div className="kebab-menu" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => rename(r)}>Renomear</button>
+                        <button className="danger" onClick={() => remove(r.id)}>
+                          Apagar
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               {playing === r.id && (
@@ -1154,6 +1214,7 @@ function ConfigScreen({
   const [logText, setLogText] = useState<string | null>(null);
   const [icsUrl, setIcsUrl] = useState("");
   const [recordAll, setRecordAll] = useState(false);
+  const [autoSyncAgenda, setAutoSyncAgenda] = useState(true);
   const [theme, setTheme] = useState("system");
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1193,6 +1254,7 @@ function ConfigScreen({
       setSummaryProvider(providerFromEndpoint(SUMMARY_PROVIDERS, settings.summary_endpoint_url));
       setIcsUrl(settings.ics_url);
       setRecordAll(settings.record_all);
+      setAutoSyncAgenda(settings.auto_sync_agenda);
       setAttioUserEmail(settings.attio_user_email);
       setTheme(settings.theme);
     }
@@ -1212,6 +1274,7 @@ function ConfigScreen({
         recordAll,
         attioUserEmail,
         theme,
+        autoSyncAgenda,
       });
       if (apiKey.trim()) {
         await invoke("set_api_key", { key: apiKey });
@@ -1420,6 +1483,14 @@ function ConfigScreen({
           onChange={(e) => setRecordAll(e.target.checked)}
         />
         Gravar todas as reuniões por padrão
+      </label>
+      <label className="chk">
+        <input
+          type="checkbox"
+          checked={autoSyncAgenda}
+          onChange={(e) => setAutoSyncAgenda(e.target.checked)}
+        />
+        Sincronizar a agenda automaticamente ao abrir o app
       </label>
 
       <h3 className="cfg-section">Attio (CRM)</h3>

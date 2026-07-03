@@ -27,12 +27,17 @@ pub fn run() {
             tray::build_tray(app.handle())?;
             scheduler::spawn(app.handle().clone());
 
-            // Atualiza a agenda no boot, se o ICS já estiver configurado.
+            // Atualiza a agenda no boot, se habilitado e o ICS configurado.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(list) = commands::refresh_meetings(handle.clone()).await {
-                    use tauri::Emitter;
-                    let _ = handle.emit("meetings-refreshed", list);
+                let auto = commands::get_settings(handle.clone())
+                    .map(|s| s.auto_sync_agenda)
+                    .unwrap_or(true);
+                if auto {
+                    if let Ok(list) = commands::refresh_meetings(handle.clone()).await {
+                        use tauri::Emitter;
+                        let _ = handle.emit("meetings-refreshed", list);
+                    }
                 }
             });
 
@@ -59,6 +64,7 @@ pub fn run() {
             commands::start_meeting_recording,
             commands::list_recordings,
             commands::delete_recording,
+            commands::rename_recording,
             commands::recording_level,
             commands::recording_status,
             commands::is_recording,
