@@ -149,7 +149,19 @@ fn tick(app: &AppHandle, triggered: &mut HashSet<String>) {
 
 /// Janela pequena no canto inferior direito com botão "Iniciar gravação".
 /// (Notificação nativa com botão não é confiável no Windows; janela própria é.)
+///
+/// A criação da janela/WebView precisa acontecer na thread principal — o
+/// scheduler roda numa thread própria, então despacha via run_on_main_thread
+/// (criar WebView2 fora da main thread falha com 0x80070057 / E_INVALIDARG).
 fn show_meeting_toast(app: &AppHandle, title: &str, end_ms: i64) {
+    let app_main = app.clone();
+    let title = title.to_string();
+    if let Err(e) = app.run_on_main_thread(move || build_toast(&app_main, &title, end_ms)) {
+        logs::log(app, "ERRO", "agenda", &format!("run_on_main_thread falhou: {e}"));
+    }
+}
+
+fn build_toast(app: &AppHandle, title: &str, end_ms: i64) {
     // Uma por vez: fecha a anterior se ainda estiver aberta.
     if let Some(w) = app.get_webview_window("meeting-alert") {
         let _ = w.close();
