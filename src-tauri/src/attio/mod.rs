@@ -2,11 +2,15 @@
 //! como nota em cada participante, linkando a meeting.
 //!
 //! API v2, auth `Authorization: Bearer <chave>`. Endpoints:
-//! - GET  /v2/meetings?participants=<email>            (listar candidatas)
+//! - GET  /v2/meetings?ends_from=&starts_before=&timezone=  (candidatas por janela)
 //! - POST /v2/meetings                                 (find-or-create)
 //! - POST /v2/objects/people/records/query             (achar pessoa por email)
 //! - POST /v2/notes                                    (criar nota)
 //! A chave vem do keychain (nunca daqui).
+//!
+//! Nota: o filtro `participants` do GET /v2/meetings (endpoint beta) trava no
+//! server do Attio. Filtramos por janela de tempo (que funciona) e casamos os
+//! emails no cliente, sobre o campo `participants` de cada meeting.
 
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
@@ -20,6 +24,8 @@ pub struct AttioMeeting {
     pub title: String,
     pub start: Option<String>,
     pub end: Option<String>,
+    /// Emails dos participantes (para o usuário conferir e p/ casar por email).
+    pub participants: Vec<String>,
 }
 
 fn client() -> reqwest::blocking::Client {
@@ -72,21 +78,48 @@ fn meeting_from_value(v: &serde_json::Value) -> Option<AttioMeeting> {
         .pointer("/end/datetime")
         .and_then(|x| x.as_str())
         .map(String::from);
+    let participants = v
+        .get("participants")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    p.get("email_address")
+                        .and_then(|e| e.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Some(AttioMeeting {
         meeting_id,
         title,
         start,
         end,
+        participants,
     })
 }
 
-/// Lista meetings que têm ao menos um dos emails como participante.
-pub fn list_meetings(key: &str, emails: &[String]) -> Result<Vec<AttioMeeting>> {
-    let joined = emails.join(",");
-    let mut params: Vec<(&str, &str)> = vec![("limit", "25")];
-    if !joined.is_empty() {
-        params.push(("participants", joined.as_str()));
-    }
+/// Lista meetings numa janela de tempo. Se `emails` for informado, filtra no
+/// cliente para as que têm ao menos um dos emails como participante (com
+/// fallback: se nenhuma casar, devolve todas da janela p/ o usuário escolher).
+///
+/// `ends_from` e `starts_before` são ISO-8601; a meeting entra se sobrepõe a
+/// janela [ends_from, starts_before).
+pub fn list_meetings(
+    key: &str,
+    ends_from: &str,
+    starts_before: &str,
+    timezone: &str,
+    emails: &[String],
+) -> Result<Vec<AttioMeeting>> {
+    let params: Vec<(&str, &str)> = vec![
+        ("limit", "50"),
+        ("sort", "start_asc"),
+        ("ends_from", ends_from),
+        ("starts_before", starts_before),
+        ("timezone", timezone),
+    ];
     let url = reqwest::Url::parse_with_params(&format!("{BASE}/meetings"), &params)
         .map_err(|e| anyhow!("Attio: URL inválida: {e}"))?;
     let json = get_json(key, url)?;
@@ -95,7 +128,22 @@ pub fn list_meetings(key: &str, emails: &[String]) -> Result<Vec<AttioMeeting>> 
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default();
-    Ok(arr.iter().filter_map(meeting_from_value).collect())
+    let all: Vec<AttioMeeting> = arr.iter().filter_map(meeting_from_value).collect();
+
+    if emails.is_empty() {
+        return Ok(all);
+    }
+    let wanted: Vec<String> = emails.iter().map(|e| e.to_lowercase()).collect();
+    let matched: Vec<AttioMeeting> = all
+        .iter()
+        .filter(|m| {
+            m.participants
+                .iter()
+                .any(|p| wanted.contains(&p.to_lowercase()))
+        })
+        .cloned()
+        .collect();
+    Ok(if matched.is_empty() { all } else { matched })
 }
 
 /// Acha ou cria uma meeting a partir de título/horário/participantes. Retorna o meeting_id.

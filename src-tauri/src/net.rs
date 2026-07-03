@@ -78,19 +78,24 @@ pub fn attio_selftest(key: Option<&str>, emails: &[String]) -> String {
                 Err(e) => format!("[{label}] ERRO {e:?} ({:?})\n", t.elapsed()),
             }
         };
-        // A: authed sem participants.
-        out.push_str(&leg("auth-sem-part", format!("{URL}")));
-        // B: authed com participants (a chamada real que trava).
-        if !emails.is_empty() {
-            let joined = emails.join(",");
-            let url = reqwest::Url::parse_with_params(
-                "https://api.attio.com/v2/meetings",
-                &[("limit", "25"), ("participants", joined.as_str())],
-            )
-            .map(|u| u.to_string())
-            .unwrap_or_else(|_| URL.to_string());
-            out.push_str(&leg("auth-com-part", url));
-        }
+        // A: authed simples (limit=1).
+        out.push_str(&leg("auth-simples", format!("{URL}")));
+        // B: authed por janela de tempo (a abordagem nova que substitui o
+        //    filtro `participants`, que trava no server beta do Attio).
+        let url_janela = reqwest::Url::parse_with_params(
+            "https://api.attio.com/v2/meetings",
+            &[
+                ("limit", "50"),
+                ("sort", "start_asc"),
+                ("ends_from", "2020-01-01T00:00:00.000Z"),
+                ("starts_before", "2030-01-01T00:00:00.000Z"),
+                ("timezone", "America/Sao_Paulo"),
+            ],
+        )
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| URL.to_string());
+        out.push_str(&leg("auth-janela", url_janela));
+        let _ = emails;
     } else {
         out.push_str("[auth] sem chave configurada — pulei os testes autenticados\n");
     }

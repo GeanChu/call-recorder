@@ -47,6 +47,7 @@ type AttioMeeting = {
   title: string;
   start: string | null;
   end: string | null;
+  participants: string[];
 };
 
 type Summary = {
@@ -658,16 +659,26 @@ function AttioUpload({
   }
 
   async function search() {
+    if (!recording) return;
     setError(null);
     setResult(null);
     const list = parseEmails();
-    if (list.length === 0) {
-      setError("Informe ao menos 1 email de participante.");
-      return;
-    }
+    // Janela: da reunião que termina depois do início da gravação (com folga de
+    // 30min p/ gravação iniciada tarde) até a que começa antes do fim (+30min).
+    const buffer = 30 * 60 * 1000;
+    const endsFrom = new Date(recording.created_at - buffer).toISOString();
+    const startsBefore = new Date(
+      recording.created_at + recording.duration_s * 1000 + buffer,
+    ).toISOString();
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     setBusy(true);
     try {
-      const found = await invoke<AttioMeeting[]>("attio_find_meetings", { emails: list });
+      const found = await invoke<AttioMeeting[]>("attio_find_meetings", {
+        endsFrom,
+        startsBefore,
+        timezone,
+        emails: list,
+      });
       setCandidates(found);
       setSelected(found.length > 0 ? found[0].meeting_id : "new");
     } catch (e) {
@@ -740,11 +751,12 @@ function AttioUpload({
       {kind && (
         <>
           <p className="hint">
-            Subindo o {kind === "summary" ? "resumo" : "a transcrição"}. Informe os participantes
-            (até 5 emails) para achar a reunião no Attio.
+            Subindo o {kind === "summary" ? "resumo" : "a transcrição"}. A reunião é buscada pelo
+            horário da gravação. Emails (opcional, até 5) priorizam as reuniões com esses
+            participantes.
           </p>
           <div className="form-row">
-            <label>Participantes (emails, separados por vírgula)</label>
+            <label>Participantes (emails, opcional)</label>
             <input
               value={emails}
               onChange={(e) => setEmails(e.target.value)}
@@ -771,9 +783,15 @@ function AttioUpload({
                   <span>
                     <strong>{m.title}</strong>
                     {m.start && <> — {new Date(m.start).toLocaleString("pt-BR")}</>}
+                    {m.participants.length > 0 && (
+                      <span className="attio-parts"> · {m.participants.join(", ")}</span>
+                    )}
                   </span>
                 </label>
               ))}
+              {candidates.length === 0 && (
+                <p className="hint">Nenhuma reunião nesse horário. Crie uma nova abaixo.</p>
+              )}
               <label className="chk">
                 <input
                   type="radio"

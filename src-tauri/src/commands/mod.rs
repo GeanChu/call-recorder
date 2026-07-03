@@ -221,16 +221,23 @@ pub async fn attio_selftest(emails: Vec<String>) -> Result<String, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Lista meetings do Attio com ao menos um dos emails como participante.
+/// Lista meetings do Attio numa janela de tempo, casando emails no cliente.
 #[tauri::command]
-pub async fn attio_find_meetings(emails: Vec<String>) -> Result<Vec<AttioMeeting>, String> {
+pub async fn attio_find_meetings(
+    ends_from: String,
+    starts_before: String,
+    timezone: String,
+    emails: Vec<String>,
+) -> Result<Vec<AttioMeeting>, String> {
     let key = settings::get_attio_key()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "configure a chave do Attio nas Configurações".to_string())?;
-    tauri::async_runtime::spawn_blocking(move || attio::list_meetings(&key, &emails))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        attio::list_meetings(&key, &ends_from, &starts_before, &timezone, &emails)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// Sobe a transcrição ou o resumo como nota em cada participante, linkando a meeting.
