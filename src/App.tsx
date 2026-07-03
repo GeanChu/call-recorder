@@ -79,6 +79,7 @@ type Provider = {
   label: string;
   endpoint: string;
   model: string;
+  models: string[];
   keyHelp: string;
 };
 
@@ -89,6 +90,7 @@ const STT_PROVIDERS: Provider[] = [
     label: "Groq (Whisper)",
     endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
     model: "whisper-large-v3-turbo",
+    models: ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"],
     keyHelp: "Chave grátis em console.groq.com/keys (Groq → API Keys → Create API Key).",
   },
   {
@@ -96,6 +98,7 @@ const STT_PROVIDERS: Provider[] = [
     label: "OpenAI (Whisper)",
     endpoint: "https://api.openai.com/v1/audio/transcriptions",
     model: "whisper-1",
+    models: ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
     keyHelp: "platform.openai.com/api-keys (OpenAI → API keys → Create new secret key).",
   },
   {
@@ -103,6 +106,7 @@ const STT_PROVIDERS: Provider[] = [
     label: "Fireworks AI (Whisper)",
     endpoint: "https://api.fireworks.ai/inference/v1/audio/transcriptions",
     model: "whisper-v3",
+    models: ["whisper-v3", "whisper-v3-turbo"],
     keyHelp: "fireworks.ai → Account → API Keys.",
   },
   {
@@ -110,6 +114,7 @@ const STT_PROVIDERS: Provider[] = [
     label: "Personalizado",
     endpoint: "",
     model: "",
+    models: [],
     keyHelp: "Informe um endpoint compatível com a API OpenAI de transcrição.",
   },
 ];
@@ -121,6 +126,7 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "OpenAI (GPT)",
     endpoint: "https://api.openai.com/v1/chat/completions",
     model: "gpt-4o-mini",
+    models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o4-mini"],
     keyHelp: "platform.openai.com/api-keys (OpenAI → API keys → Create new secret key).",
   },
   {
@@ -128,6 +134,12 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "Claude (Anthropic)",
     endpoint: "https://api.anthropic.com/v1/chat/completions",
     model: "claude-3-5-sonnet-latest",
+    models: [
+      "claude-3-5-sonnet-latest",
+      "claude-3-7-sonnet-latest",
+      "claude-3-5-haiku-latest",
+      "claude-3-opus-latest",
+    ],
     keyHelp: "console.anthropic.com/settings/keys (Anthropic → API Keys). Endpoint compatível com OpenAI.",
   },
   {
@@ -135,6 +147,7 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "Google Gemini",
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     model: "gemini-2.0-flash",
+    models: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
     keyHelp: "aistudio.google.com/apikey (Google AI Studio → Get API key).",
   },
   {
@@ -142,6 +155,7 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "MiniMax (Subscription sk-cp)",
     endpoint: "https://api.minimax.io/v1/chat/completions",
     model: "MiniMax-M3",
+    models: ["MiniMax-M3", "MiniMax-Text-01"],
     keyHelp: "Use a Subscription Key sk-cp da sua conta MiniMax (menu da conta → Subscription Key).",
   },
   {
@@ -149,6 +163,7 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "MiniMax (API)",
     endpoint: "https://api.minimax.io/v1/chat/completions",
     model: "MiniMax-M3",
+    models: ["MiniMax-M3", "MiniMax-Text-01"],
     keyHelp: "platform.minimax.io → Account → API Keys (chave de API, começa com ey...).",
   },
   {
@@ -156,6 +171,7 @@ const SUMMARY_PROVIDERS: Provider[] = [
     label: "Personalizado",
     endpoint: "",
     model: "",
+    models: [],
     keyHelp: "Informe um endpoint compatível com a API OpenAI de chat completions.",
   },
 ];
@@ -164,6 +180,12 @@ const SUMMARY_PROVIDERS: Provider[] = [
 function providerFromEndpoint(list: Provider[], endpoint: string): string {
   const hit = list.find((p) => p.id !== "custom" && p.endpoint === endpoint);
   return hit ? hit.id : "custom";
+}
+
+// Opções de modelo do provedor; inclui o modelo salvo caso não esteja na lista.
+function modelOptions(list: Provider[], providerId: string, current: string): string[] {
+  const models = list.find((p) => p.id === providerId)?.models ?? [];
+  return current && !models.includes(current) ? [current, ...models] : models;
 }
 
 function icon(name: string) {
@@ -1072,11 +1094,21 @@ function ConfigScreen({
       )}
       <div className="form-row">
         <label>Modelo</label>
-        <input
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="whisper-large-v3-turbo"
-        />
+        {sttProvider === "custom" ? (
+          <input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="whisper-large-v3-turbo"
+          />
+        ) : (
+          <select value={model} onChange={(e) => setModel(e.target.value)}>
+            {modelOptions(STT_PROVIDERS, sttProvider, model).map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <div className="form-row">
         <label>Chave da API</label>
@@ -1124,11 +1156,21 @@ function ConfigScreen({
       )}
       <div className="form-row">
         <label>Modelo</label>
-        <input
-          value={summaryModel}
-          onChange={(e) => setSummaryModel(e.target.value)}
-          placeholder="MiniMax-M3"
-        />
+        {summaryProvider === "custom" ? (
+          <input
+            value={summaryModel}
+            onChange={(e) => setSummaryModel(e.target.value)}
+            placeholder="MiniMax-M3"
+          />
+        ) : (
+          <select value={summaryModel} onChange={(e) => setSummaryModel(e.target.value)}>
+            {modelOptions(SUMMARY_PROVIDERS, summaryProvider, summaryModel).map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <div className="form-row">
         <label>Chave da API</label>
