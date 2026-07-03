@@ -34,6 +34,8 @@ Os instaladores ainda **não são assinados digitalmente** (assinatura via [Sign
 
 Se o seu antivírus bloquear: adicione o Hicorder como aplicativo confiável ou baixe novamente após a assinatura digital estar ativa. No SmartScreen: "Mais informações" → "Executar assim mesmo".
 
+A assinatura de código dos executáveis Windows é feita pelo **[SignPath Foundation](https://signpath.org/)** (programa gratuito de assinatura para projetos open source). *Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org/).*
+
 ## Chaves de API
 
 Cada etapa de IA usa um provedor à sua escolha (Configurações → selects de provedor, com instrução de onde obter cada chave):
