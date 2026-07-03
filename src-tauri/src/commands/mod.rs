@@ -51,13 +51,13 @@ pub fn list_input_devices() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn start_recording(app: AppHandle) -> Result<RecordingInfo, String> {
-    start_recording_core(&app)
+    logged(&app, "gravacao", start_recording_core(&app))
 }
 
 /// Para a gravação, mistura/encoda para Opus, persiste e retorna a linha.
 #[tauri::command]
 pub fn stop_recording(app: AppHandle) -> Result<RecordingRow, String> {
-    stop_recording_core(&app)
+    logged(&app, "gravacao", stop_recording_core(&app))
 }
 
 /// Núcleo de iniciar — chamável pelo command, pelo tray e pelo scheduler.
@@ -98,7 +98,7 @@ pub fn start_meeting_recording(
     end_ms: i64,
     title: String,
 ) -> Result<RecordingInfo, String> {
-    start_recording_for_meeting_core(&app, end_ms, &title)
+    logged(&app, "gravacao", start_recording_for_meeting_core(&app, end_ms, &title))
 }
 
 pub fn stop_recording_core(app: &AppHandle) -> Result<RecordingRow, String> {
@@ -300,6 +300,16 @@ pub fn set_attio_key(key: String) -> Result<(), String> {
 fn fail(app: &AppHandle, category: &str, raw: String) -> String {
     logs::log(app, "ERRO", category, &raw);
     logs::humanize(&raw)
+}
+
+/// Loga o erro (se houver) e devolve o Result inalterado. Usado no boundary
+/// dos comandos que já têm mensagem clara (gravação, agenda) para que tudo
+/// caia no callrec.log, não só os caminhos de IA/CRM.
+fn logged<T>(app: &AppHandle, category: &str, r: Result<T, String>) -> Result<T, String> {
+    if let Err(e) = &r {
+        logs::log(app, "ERRO", category, e);
+    }
+    r
 }
 
 /// Testa a chave/endpoint da transcrição. `key` opcional (usa o keychain se vazio).
@@ -673,44 +683,52 @@ pub async fn refresh_meetings(app: AppHandle) -> Result<Vec<MeetingRow>, String>
         (url, ra)
     };
     if ics_url.trim().is_empty() {
+        // Config faltando, não é erro de execução — não vai pro log.
         return Err("configure a URL do calendário (ICS) nas Configurações".to_string());
     }
 
-    let parsed = tauri::async_runtime::spawn_blocking(move || meetings::fetch_and_parse(&ics_url))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let work = async {
+        let parsed =
+            tauri::async_runtime::spawn_blocking(move || meetings::fetch_and_parse(&ics_url))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
 
-    let conn = open_db(&app)?;
-    for m in &parsed {
-        storage::upsert_meeting(
-            &conn,
-            &m.uid,
-            &m.title,
-            m.starts_at,
-            m.ends_at,
-            record_all,
-            &m.participants,
-            m.location.as_deref(),
-            m.link.as_deref(),
-        )
-        .map_err(|e| e.to_string())?;
+        let conn = open_db(&app)?;
+        for m in &parsed {
+            storage::upsert_meeting(
+                &conn,
+                &m.uid,
+                &m.title,
+                m.starts_at,
+                m.ends_at,
+                record_all,
+                &m.participants,
+                m.location.as_deref(),
+                m.link.as_deref(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let cutoff = now_ms() - 3_600_000; // mantém até 1h após o fim
+        storage::prune_meetings(&conn, cutoff).map_err(|e| e.to_string())?;
+        storage::list_meetings(&conn, cutoff).map_err(|e| e.to_string())
     }
-    let cutoff = now_ms() - 3_600_000; // mantém até 1h após o fim
-    storage::prune_meetings(&conn, cutoff).map_err(|e| e.to_string())?;
-    storage::list_meetings(&conn, cutoff).map_err(|e| e.to_string())
+    .await;
+    logged(&app, "agenda", work)
 }
 
 #[tauri::command]
 pub fn list_meetings(app: AppHandle) -> Result<Vec<MeetingRow>, String> {
-    let conn = open_db(&app)?;
-    storage::list_meetings(&conn, now_ms() - 3_600_000).map_err(|e| e.to_string())
+    let r = open_db(&app)
+        .and_then(|conn| storage::list_meetings(&conn, now_ms() - 3_600_000).map_err(|e| e.to_string()));
+    logged(&app, "agenda", r)
 }
 
 #[tauri::command]
 pub fn set_meeting_record(app: AppHandle, uid: String, enabled: bool) -> Result<(), String> {
-    let conn = open_db(&app)?;
-    storage::set_meeting_record(&conn, &uid, enabled).map_err(|e| e.to_string())
+    let r = open_db(&app)
+        .and_then(|conn| storage::set_meeting_record(&conn, &uid, enabled).map_err(|e| e.to_string()));
+    logged(&app, "agenda", r)
 }
 
 pub(crate) fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
