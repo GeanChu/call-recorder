@@ -925,15 +925,15 @@ function GravacoesScreen({
                 Renomear
               </button>
               <span className="export-group">
+                <button className="icon-btn" onClick={exportAudio} disabled={exporting}>
+                  {icon("export")}
+                  {exporting ? "Exportando..." : "Exportar áudio"}
+                </button>
                 <select value={exportFmt} onChange={(e) => setExportFmt(e.target.value)}>
                   <option value="mp3">MP3</option>
                   <option value="wav">WAV</option>
                   <option value="ogg">OGG</option>
                 </select>
-                <button className="icon-btn" onClick={exportAudio} disabled={exporting}>
-                  {icon("export")}
-                  {exporting ? "Exportando..." : "Exportar áudio"}
-                </button>
               </span>
               <button className="icon-btn danger" onClick={removeSel}>
                 {icon("delete")}
