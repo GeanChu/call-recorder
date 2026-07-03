@@ -78,5 +78,31 @@ pub fn summarize(cfg: &SummaryConfig, api_key: &str, transcript: &str) -> Result
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .ok_or_else(|| anyhow!("resposta sem choices[0].message.content: {raw}"))?;
-    Ok(content.trim().to_string())
+    Ok(strip_reasoning(content))
+}
+
+/// Remove o raciocínio interno de modelos "reasoning" (MiniMax-M3, etc.):
+/// blocos `<think>...</think>` e qualquer texto antes de um `</think>` solto.
+fn strip_reasoning(content: &str) -> String {
+    let mut s = content.to_string();
+
+    // Remove pares <think>...</think> (case-insensitive, multi-linha).
+    loop {
+        let lower = s.to_lowercase();
+        let (Some(open), Some(close)) = (lower.find("<think>"), lower.find("</think>")) else {
+            break;
+        };
+        if close < open {
+            break; // </think> antes de <think>: tratado abaixo.
+        }
+        s.replace_range(open..close + "</think>".len(), "");
+    }
+
+    // Fecha-tag órfã (abertura implícita): fica só o que vem depois da última.
+    let lower = s.to_lowercase();
+    if let Some(pos) = lower.rfind("</think>") {
+        s = s[pos + "</think>".len()..].to_string();
+    }
+
+    s.trim().to_string()
 }
