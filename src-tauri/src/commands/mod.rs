@@ -197,6 +197,49 @@ pub async fn export_audio(
     .map_err(|e| fail(&app2, "export", e.to_string()))
 }
 
+/// Importa um arquivo de áudio do usuário como uma gravação, convertendo para
+/// o formato padrão (Opus/Ogg, faixa única). Vira "Upload Manual — <data/hora>".
+#[tauri::command]
+pub async fn import_audio(app: AppHandle, src_path: String) -> Result<RecordingRow, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || logged(&app2, "import", import_audio_core(&app2, &src_path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn import_audio_core(app: &AppHandle, src: &str) -> Result<RecordingRow, String> {
+    if !Path::new(src).exists() {
+        return Err("arquivo não encontrado".to_string());
+    }
+    let id = new_id();
+    let dir = recordings_dir(app).map_err(|e| e.to_string())?.join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let ffmpeg = resolve_ffmpeg(app);
+    let mic = dir.join("mic.ogg");
+    // Faixa única no formato padrão (mono 16k Opus). Sem faixa de sistema.
+    encode::mix_to_opus(&ffmpeg, src, None, &mic)
+        .map_err(|e| fail(app, "import", e.to_string()))?;
+
+    let duration_s = encode::probe_duration(&ffmpeg, src).unwrap_or(0.0);
+    let size_bytes = std::fs::metadata(&mic).map(|m| m.len()).unwrap_or(0) as i64;
+    let when = chrono::Local::now().format("%d/%m/%Y %H:%M");
+
+    let row = RecordingRow {
+        id,
+        title: format!("Upload Manual — {when}"),
+        path: mic.to_string_lossy().into_owned(),
+        system_path: None,
+        created_at: now_ms(),
+        duration_s,
+        size_bytes,
+    };
+    let conn = open_db(app)?;
+    storage::insert(&conn, &row).map_err(|e| e.to_string())?;
+    let _ = app.emit("recording-changed", false);
+    Ok(row)
+}
+
 /// Renomeia uma gravação.
 #[tauri::command]
 pub fn rename_recording(app: AppHandle, recording_id: String, title: String) -> Result<(), String> {

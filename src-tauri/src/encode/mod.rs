@@ -8,6 +8,28 @@ use std::process::Command;
 
 use anyhow::{anyhow, bail, Result};
 
+/// Duração de um arquivo de áudio em segundos, lendo o cabeçalho via ffmpeg.
+/// `ffmpeg -i <arquivo>` sai com erro (sem output) mas imprime "Duration:".
+pub fn probe_duration(ffmpeg: &str, path: &str) -> Option<f64> {
+    let mut cmd = Command::new(ffmpeg);
+    cmd.arg("-hide_banner").arg("-i").arg(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let idx = stderr.find("Duration:")? + "Duration:".len();
+    let rest = stderr[idx..].trim_start();
+    let hms = rest.split(',').next()?.trim(); // "HH:MM:SS.ss"
+    let mut parts = hms.split(':');
+    let h: f64 = parts.next()?.trim().parse().ok()?;
+    let m: f64 = parts.next()?.trim().parse().ok()?;
+    let s: f64 = parts.next()?.trim().parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
+}
+
 /// Mistura `mic` (+ `system` se houver) numa faixa Opus mono ~32 kbps, 16 kHz.
 /// O container vem da extensão de `out` (usamos `.webm`, aceito pela MiniMax).
 pub fn mix_to_opus(ffmpeg: &str, mic: &str, system: Option<&str>, out: &Path) -> Result<()> {

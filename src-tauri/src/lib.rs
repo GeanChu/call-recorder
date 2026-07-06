@@ -80,6 +80,7 @@ pub fn run() {
             commands::rename_recording,
             commands::export_audio,
             commands::prepare_playback,
+            commands::import_audio,
             commands::recording_level,
             commands::recording_status,
             commands::is_recording,
