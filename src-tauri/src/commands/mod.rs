@@ -55,9 +55,15 @@ pub fn start_recording(app: AppHandle) -> Result<RecordingInfo, String> {
 }
 
 /// Para a gravação, mistura/encoda para Opus, persiste e retorna a linha.
+/// O encode do ffmpeg pode demorar em reuniões longas, então roda numa thread
+/// de blocking — se rodasse direto no comando (thread principal), a UI travaria
+/// no "Processando".
 #[tauri::command]
-pub fn stop_recording(app: AppHandle) -> Result<RecordingRow, String> {
-    logged(&app, "gravacao", stop_recording_core(&app))
+pub async fn stop_recording(app: AppHandle) -> Result<RecordingRow, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || logged(&app2, "gravacao", stop_recording_core(&app2)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Núcleo de iniciar — chamável pelo command, pelo tray e pelo scheduler.
