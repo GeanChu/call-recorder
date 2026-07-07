@@ -1,46 +1,109 @@
-//! Segredos no keychain do SO (crate `keyring`). Nunca em texto puro, nunca logado.
+//! Chaves de API por SO.
 //!
-//! As preferências não-secretas (idioma padrão, URL/modelo do provedor) ficam no
-//! SQLite (ver `storage`).
+//! - Windows/Linux: keychain do SO (crate `keyring`) — sem fricção.
+//! - macOS: arquivo protegido (0600) na pasta de dados do app. Apps não
+//!   assinados/notarizados sofrem prompts repetidos do chaveiro "login" no
+//!   macOS; o arquivo evita isso. As chaves ficam só na pasta local do usuário.
+//!
+//! Preferências não-secretas (idioma, endpoints, etc.) ficam no SQLite.
 
-use anyhow::{anyhow, Result};
-use keyring::Entry;
+use anyhow::Result;
 
 const SERVICE: &str = "com.hicapital.hicorder";
-/// Nome antigo (Call Recorder) — mantido para migrar chaves já salvas.
-const OLD_SERVICE: &str = "com.hicapital.callrecorder";
 const TRANSCRIPTION_KEY: &str = "transcription_api_key";
 const SUMMARY_KEY: &str = "summary_api_key";
 const ATTIO_KEY: &str = "attio_api_key";
 
-fn entry(user: &str) -> Result<Entry> {
-    Entry::new(SERVICE, user).map_err(|e| anyhow!("keychain: {e}"))
+// ---- macOS: arquivo protegido (sem keychain) ----
+#[cfg(target_os = "macos")]
+mod store {
+    use super::SERVICE;
+    use anyhow::{anyhow, Result};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn secrets_path() -> Result<PathBuf> {
+        let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME não definido"))?;
+        Ok(PathBuf::from(home)
+            .join("Library/Application Support")
+            .join(SERVICE)
+            .join("secrets.json"))
+    }
+
+    fn read_all() -> BTreeMap<String, String> {
+        secrets_path()
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn set(user: &str, key: &str) -> Result<()> {
+        let path = secrets_path()?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut map = read_all();
+        map.insert(user.to_string(), key.to_string());
+        let json = serde_json::to_string(&map)?;
+        std::fs::write(&path, json)?;
+        // Apenas o dono lê/escreve.
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        Ok(())
+    }
+
+    pub fn get(user: &str) -> Result<Option<String>> {
+        Ok(read_all().get(user).cloned())
+    }
+}
+
+// ---- Windows/Linux: keychain do SO ----
+#[cfg(not(target_os = "macos"))]
+mod store {
+    use super::SERVICE;
+    use anyhow::{anyhow, Result};
+    use keyring::Entry;
+
+    const OLD_SERVICE: &str = "com.hicapital.callrecorder";
+
+    fn entry(user: &str) -> Result<Entry> {
+        Entry::new(SERVICE, user).map_err(|e| anyhow!("keychain: {e}"))
+    }
+
+    pub fn set(user: &str, key: &str) -> Result<()> {
+        entry(user)?
+            .set_password(key)
+            .map_err(|e| anyhow!("keychain: {e}"))
+    }
+
+    pub fn get(user: &str) -> Result<Option<String>> {
+        match entry(user)?.get_password() {
+            Ok(p) => Ok(Some(p)),
+            Err(keyring::Error::NoEntry) => migrate_old(user),
+            Err(e) => Err(anyhow!("keychain: {e}")),
+        }
+    }
+
+    /// Migração preguiçosa do serviço antigo (Call Recorder).
+    fn migrate_old(user: &str) -> Result<Option<String>> {
+        let old = Entry::new(OLD_SERVICE, user).map_err(|e| anyhow!("keychain: {e}"))?;
+        match old.get_password() {
+            Ok(p) => {
+                let _ = set(user, &p);
+                Ok(Some(p))
+            }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(anyhow!("keychain: {e}")),
+        }
+    }
 }
 
 fn set_key(user: &str, key: &str) -> Result<()> {
-    entry(user)?.set_password(key).map_err(|e| anyhow!("keychain: {e}"))
+    store::set(user, key)
 }
-
 fn get_key(user: &str) -> Result<Option<String>> {
-    match entry(user)?.get_password() {
-        Ok(p) => Ok(Some(p)),
-        Err(keyring::Error::NoEntry) => migrate_old_key(user),
-        Err(e) => Err(anyhow!("keychain: {e}")),
-    }
-}
-
-/// Migração preguiçosa: se a chave só existe no serviço antigo, copia para o
-/// novo e passa a usá-lo. A entrada antiga é mantida (rollback possível).
-fn migrate_old_key(user: &str) -> Result<Option<String>> {
-    let old = Entry::new(OLD_SERVICE, user).map_err(|e| anyhow!("keychain: {e}"))?;
-    match old.get_password() {
-        Ok(p) => {
-            let _ = set_key(user, &p);
-            Ok(Some(p))
-        }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow!("keychain: {e}")),
-    }
+    store::get(user)
 }
 
 // Transcrição (Groq/Whisper).
