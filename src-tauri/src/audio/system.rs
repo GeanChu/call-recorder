@@ -72,25 +72,6 @@ mod macos_impl {
             .collect()
     }
 
-    /// Reduz o áudio (planar por canal, ou mono) a uma faixa mono f32.
-    fn downmix(list: &AudioBufferList) -> Vec<f32> {
-        let nb = list.num_buffers();
-        if nb == 0 {
-            return Vec::new();
-        }
-        if nb == 1 {
-            return list.buffer(0).map(|b| to_f32(b.data())).unwrap_or_default();
-        }
-        // Planar: um buffer por canal; média entre os canais.
-        let chans: Vec<Vec<f32>> = (0..nb)
-            .filter_map(|i| list.buffer(i).map(|b| to_f32(b.data())))
-            .collect();
-        let n = chans.iter().map(|c| c.len()).min().unwrap_or(0);
-        (0..n)
-            .map(|i| chans.iter().map(|c| c[i]).sum::<f32>() / chans.len() as f32)
-            .collect()
-    }
-
     pub fn spawn(
         ffmpeg: String,
         out_path: PathBuf,
@@ -111,7 +92,7 @@ mod macos_impl {
                 .build();
             let config = SCStreamConfiguration::new()
                 .with_captures_audio(true)
-                .with_sample_rate(SAMPLE_RATE)
+                .with_sample_rate(SAMPLE_RATE as i32)
                 .with_channel_count(2);
 
             let (tx, rx) = mpsc::channel::<Vec<f32>>();
@@ -122,13 +103,28 @@ mod macos_impl {
                     if !matches!(of_type, SCStreamOutputType::Audio) {
                         return;
                     }
-                    if let Some(list) = sample.audio_buffer_list() {
-                        let mono = downmix(&list);
-                        if !mono.is_empty() {
-                            let peak = mono.iter().fold(0f32, |m, &s| m.max(s.abs()));
-                            level_cb.store(peak.to_bits(), Ordering::Relaxed);
-                            let _ = tx.send(mono);
-                        }
+                    let Some(list) = sample.audio_buffer_list() else {
+                        return;
+                    };
+                    // Downmix para mono: planar (1 buffer por canal) ou já mono.
+                    let nb = list.num_buffers();
+                    let mono: Vec<f32> = if nb == 0 {
+                        Vec::new()
+                    } else if nb == 1 {
+                        list.buffer(0).map(|b| to_f32(b.data())).unwrap_or_default()
+                    } else {
+                        let chans: Vec<Vec<f32>> = (0..nb)
+                            .filter_map(|i| list.buffer(i).map(|b| to_f32(b.data())))
+                            .collect();
+                        let n = chans.iter().map(|c| c.len()).min().unwrap_or(0);
+                        (0..n)
+                            .map(|i| chans.iter().map(|c| c[i]).sum::<f32>() / chans.len() as f32)
+                            .collect()
+                    };
+                    if !mono.is_empty() {
+                        let peak = mono.iter().fold(0f32, |m, &s| m.max(s.abs()));
+                        level_cb.store(peak.to_bits(), Ordering::Relaxed);
+                        let _ = tx.send(mono);
                     }
                 },
                 SCStreamOutputType::Audio,
