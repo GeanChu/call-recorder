@@ -1,8 +1,11 @@
 //! Captura do áudio do sistema (loopback) — a voz dos outros participantes.
 //!
-//! Windows: WASAPI loopback via crate `wasapi` (device de render + Direction::Capture
-//! em modo Shared liga o flag AUDCLNT_STREAMFLAGS_LOOPBACK). Linux (PR2c) e macOS
-//! (PR3) ainda não implementados — `spawn_system` retorna `Ok(None)` lá.
+//! - Windows: WASAPI loopback via crate `wasapi`.
+//! - macOS: ScreenCaptureKit (crate `screencapturekit`, macOS 13+) — exige
+//!   permissão de Gravação de Tela.
+//! - Linux: ainda não implementado (`Ok(None)`).
+//!
+//! Falhas na captura do sistema degradam para só-microfone (não perdem a gravação).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
@@ -23,15 +26,139 @@ pub fn spawn_system(
     Ok(Some(windows_impl::spawn(ffmpeg, out_path, stop, level)?))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn spawn_system(
+    ffmpeg: String,
+    out_path: PathBuf,
+    stop: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
+) -> Result<Option<JoinHandle<Result<RecordedTrack>>>> {
+    Ok(Some(macos_impl::spawn(ffmpeg, out_path, stop, level)?))
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn spawn_system(
     _ffmpeg: String,
     _out_path: PathBuf,
     _stop: Arc<AtomicBool>,
     _level: Arc<AtomicU32>,
 ) -> Result<Option<JoinHandle<Result<RecordedTrack>>>> {
-    // Linux (PR2c) e macOS (PR3) ainda não implementados.
+    // Linux ainda não implementado.
     Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+mod macos_impl {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    use anyhow::{anyhow, Result};
+    use screencapturekit::prelude::*;
+
+    use super::super::opus::OpusSink;
+    use super::super::RecordedTrack;
+
+    const SAMPLE_RATE: u32 = 48_000;
+
+    /// Converte bytes little-endian em f32.
+    fn to_f32(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    /// Reduz o áudio (planar por canal, ou mono) a uma faixa mono f32.
+    fn downmix(list: &AudioBufferList) -> Vec<f32> {
+        let nb = list.num_buffers();
+        if nb == 0 {
+            return Vec::new();
+        }
+        if nb == 1 {
+            return list.buffer(0).map(|b| to_f32(b.data())).unwrap_or_default();
+        }
+        // Planar: um buffer por canal; média entre os canais.
+        let chans: Vec<Vec<f32>> = (0..nb)
+            .filter_map(|i| list.buffer(i).map(|b| to_f32(b.data())))
+            .collect();
+        let n = chans.iter().map(|c| c.len()).min().unwrap_or(0);
+        (0..n)
+            .map(|i| chans.iter().map(|c| c[i]).sum::<f32>() / chans.len() as f32)
+            .collect()
+    }
+
+    pub fn spawn(
+        ffmpeg: String,
+        out_path: PathBuf,
+        stop: Arc<AtomicBool>,
+        level: Arc<AtomicU32>,
+    ) -> Result<JoinHandle<Result<RecordedTrack>>> {
+        let handle = thread::spawn(move || -> Result<RecordedTrack> {
+            let content = SCShareableContent::get()
+                .map_err(|e| anyhow!("ScreenCaptureKit (permissão de Gravação de Tela?): {e:?}"))?;
+            let display = content
+                .displays()
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("nenhum display encontrado"))?;
+            let filter = SCContentFilter::create()
+                .with_display(&display)
+                .with_excluding_windows(&[])
+                .build();
+            let config = SCStreamConfiguration::new()
+                .with_captures_audio(true)
+                .with_sample_rate(SAMPLE_RATE)
+                .with_channel_count(2);
+
+            let (tx, rx) = mpsc::channel::<Vec<f32>>();
+            let level_cb = level.clone();
+            let mut stream = SCStream::new(&filter, &config);
+            stream.add_output_handler(
+                move |sample: CMSampleBuffer, of_type: SCStreamOutputType| {
+                    if !matches!(of_type, SCStreamOutputType::Audio) {
+                        return;
+                    }
+                    if let Some(list) = sample.audio_buffer_list() {
+                        let mono = downmix(&list);
+                        if !mono.is_empty() {
+                            let peak = mono.iter().fold(0f32, |m, &s| m.max(s.abs()));
+                            level_cb.store(peak.to_bits(), Ordering::Relaxed);
+                            let _ = tx.send(mono);
+                        }
+                    }
+                },
+                SCStreamOutputType::Audio,
+            );
+            stream
+                .start_capture()
+                .map_err(|e| anyhow!("falha ao iniciar a captura do sistema: {e:?}"))?;
+
+            let mut sink = OpusSink::create(&ffmpeg, &out_path, SAMPLE_RATE, 1)?;
+            while !stop.load(Ordering::Relaxed) {
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(chunk) => sink.write_f32(&chunk)?,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            let _ = stream.stop_capture();
+            while let Ok(chunk) = rx.try_recv() {
+                sink.write_f32(&chunk)?;
+            }
+            sink.finalize()?;
+
+            Ok(RecordedTrack {
+                path: out_path,
+                sample_rate: SAMPLE_RATE,
+                channels: 1,
+            })
+        });
+        Ok(handle)
+    }
 }
 
 #[cfg(windows)]

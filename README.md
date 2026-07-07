@@ -45,6 +45,7 @@ Baixe sempre a versão mais recente na página de **[Releases](https://github.co
    codesign --force --deep -s - /Applications/Hicorder.app
    ```
 4. Autorize a permissão de **microfone** quando pedida.
+5. Para gravar o **áudio da call** (voz dos outros), o macOS exige **Gravação de Tela**: ao gravar pela primeira vez, vá em **Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela**, ative o **Hicorder** e **reinicie o app**. Sem isso, grava só o microfone.
 
 ### Linux
 [**Baixar para Linux**](https://github.com/GeanChu/hicorder/releases/latest) — `AppImage` (portátil), `.deb` (Debian/Ubuntu) ou `.rpm` (Fedora/RHEL).
