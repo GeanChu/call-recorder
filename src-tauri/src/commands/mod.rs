@@ -544,22 +544,29 @@ pub async fn attio_upload(
 ) -> Result<AttioUploadResult, String> {
     let content = {
         let conn = open_db(&app)?;
-        if kind == "summary" {
-            storage::get_summary(&conn, &recording_id)
+        match kind.as_str() {
+            "summary" => storage::get_summary(&conn, &recording_id)
                 .map_err(|e| e.to_string())?
                 .map(|s| s.text)
-                .ok_or_else(|| "gere o resumo antes de subir".to_string())?
-        } else {
-            storage::get_transcript(&conn, &recording_id)
+                .ok_or_else(|| "gere o resumo antes de subir".to_string())?,
+            "notes" => storage::get_notes(&conn, &recording_id)
+                .map_err(|e| e.to_string())?
+                .filter(|n| !n.trim().is_empty())
+                .ok_or_else(|| "escreva anotações antes de subir".to_string())?,
+            _ => storage::get_transcript(&conn, &recording_id)
                 .map_err(|e| e.to_string())?
                 .map(|t| t.text)
-                .ok_or_else(|| "transcreva antes de subir".to_string())?
+                .ok_or_else(|| "transcreva antes de subir".to_string())?,
         }
     };
     let key = settings::get_attio_key()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "configure a chave do Attio nas Configurações".to_string())?;
-    let kind_label = if kind == "summary" { "Resumo" } else { "Transcrição" };
+    let kind_label = match kind.as_str() {
+        "summary" => "Resumo",
+        "notes" => "Anotações",
+        _ => "Transcrição",
+    };
     let note_title = format!("{title} — {kind_label} (Hicorder)");
 
     tauri::async_runtime::spawn_blocking(move || -> Result<AttioUploadResult, String> {
@@ -717,20 +724,21 @@ pub fn delete_recording(app: AppHandle, recording_id: String) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn generate_summary(app: AppHandle, recording_id: String) -> Result<SummaryRow, String> {
-    let (transcript_text, cfg, api_key) = {
+    let (transcript_text, notes, cfg, api_key) = {
         let conn = open_db(&app)?;
         let t = storage::get_transcript(&conn, &recording_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "transcreva a gravação antes de resumir".to_string())?;
+        let notes = storage::get_notes(&conn, &recording_id).map_err(|e| e.to_string())?;
         let cfg = load_summary_config(&conn).map_err(|e| e.to_string())?;
         let api_key = settings::get_summary_key()
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "configure a chave do Resumo (MiniMax) nas Configurações".to_string())?;
-        (t.text, cfg, api_key)
+        (t.text, notes, cfg, api_key)
     };
 
     let text = tauri::async_runtime::spawn_blocking(move || {
-        summary::summarize(&cfg, &api_key, &transcript_text)
+        summary::summarize(&cfg, &api_key, &transcript_text, notes.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -860,6 +868,43 @@ pub fn recording_status(recorder: State<Recorder>) -> RecordingStatus {
 #[tauri::command]
 pub fn is_recording(recorder: State<Recorder>) -> bool {
     recorder.is_recording()
+}
+
+/// Id da gravação em andamento (para o painel de anotações ao vivo vincular as
+/// notas à gravação correta). None quando não há gravação.
+#[tauri::command]
+pub fn current_recording_id(recorder: State<Recorder>) -> Option<String> {
+    recorder.current_id()
+}
+
+/// Salva (ou atualiza) as anotações manuais de uma gravação. Usado tanto pelo
+/// painel ao vivo (autosave durante a reunião) quanto pela edição em Gravações.
+#[tauri::command]
+pub fn save_notes(app: AppHandle, recording_id: String, notes: String) -> Result<(), String> {
+    let r = open_db(&app)
+        .and_then(|conn| storage::upsert_notes(&conn, &recording_id, &notes, now_ms()).map_err(|e| e.to_string()));
+    logged(&app, "anotacoes", r)
+}
+
+/// Lê as anotações manuais de uma gravação (None se ainda não houver).
+#[tauri::command]
+pub fn get_notes(app: AppHandle, recording_id: String) -> Result<Option<String>, String> {
+    let r = open_db(&app)
+        .and_then(|conn| storage::get_notes(&conn, &recording_id).map_err(|e| e.to_string()));
+    logged(&app, "anotacoes", r)
+}
+
+/// Salva uma edição manual do resumo feita pelo usuário.
+#[tauri::command]
+pub fn set_summary(app: AppHandle, recording_id: String, text: String) -> Result<(), String> {
+    let row = SummaryRow {
+        recording_id,
+        text,
+        created_at: now_ms(),
+    };
+    let r = open_db(&app)
+        .and_then(|conn| storage::upsert_summary(&conn, &row).map_err(|e| e.to_string()));
+    logged(&app, "resumo", r)
 }
 
 fn recordings_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {

@@ -24,7 +24,9 @@ impl Default for SummaryConfig {
 const SYSTEM_PROMPT: &str = "Você resume reuniões em português do Brasil. A transcrição vem \
 rotulada com \"Você\" (quem gravou) e \"Participantes\". Gere um resumo claro e conciso com: \
 contexto, pontos principais, decisões tomadas e itens de ação (com responsável quando houver). \
-Use tópicos curtos.";
+Use tópicos curtos. Quando houver \"Anotações manuais\" de quem gravou, use-as para enriquecer, \
+corrigir e dar mais clareza ao resumo — elas têm prioridade sobre a transcrição em caso de \
+conflito, pois foram escritas por uma pessoa presente na reunião.";
 
 /// Valida a chave/endpoint/modelo: chat completions mínimo (1 token). Espera 200.
 pub fn test_key(cfg: &SummaryConfig, api_key: &str) -> Result<()> {
@@ -47,12 +49,23 @@ pub fn test_key(cfg: &SummaryConfig, api_key: &str) -> Result<()> {
     bail!("provedor retornou {status}: {raw}");
 }
 
-pub fn summarize(cfg: &SummaryConfig, api_key: &str, transcript: &str) -> Result<String> {
+pub fn summarize(
+    cfg: &SummaryConfig,
+    api_key: &str,
+    transcript: &str,
+    notes: Option<&str>,
+) -> Result<String> {
+    let user_content = match notes.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => format!(
+            "Transcrição da reunião:\n{transcript}\n\n---\nAnotações manuais de quem gravou:\n{n}"
+        ),
+        None => transcript.to_string(),
+    };
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
-            { "role": "user", "content": transcript }
+            { "role": "user", "content": user_content }
         ]
     });
 

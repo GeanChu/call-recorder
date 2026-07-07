@@ -98,6 +98,17 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         )",
         [],
     )?;
+    // Anotações manuais da reunião. Tabela própria (não coluna em `recordings`)
+    // porque as notas são salvas DURANTE a gravação, antes de a linha da gravação
+    // existir — a linha só é inserida ao parar. A chave é o mesmo recording_id.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS notes (
+            recording_id TEXT PRIMARY KEY,
+            text         TEXT NOT NULL,
+            updated_at   INTEGER NOT NULL
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS meetings (
             uid            TEXT PRIMARY KEY,
@@ -222,6 +233,25 @@ pub fn get_summary(conn: &Connection, recording_id: &str) -> Result<Option<Summa
     Ok(row)
 }
 
+pub fn upsert_notes(conn: &Connection, recording_id: &str, text: &str, updated_at: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO notes (recording_id, text, updated_at) VALUES (?1, ?2, ?3)",
+        params![recording_id, text, updated_at],
+    )?;
+    Ok(())
+}
+
+pub fn get_notes(conn: &Connection, recording_id: &str) -> Result<Option<String>> {
+    let v = conn
+        .query_row(
+            "SELECT text FROM notes WHERE recording_id = ?1",
+            params![recording_id],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(v)
+}
+
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
     let v = conn
         .query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| {
@@ -241,6 +271,7 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
 
 /// Remove a gravação e sua transcrição do banco. (Arquivos são apagados no command.)
 pub fn delete_recording(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM notes WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM summaries WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM transcripts WHERE recording_id = ?1", params![id])?;
     conn.execute("DELETE FROM recordings WHERE id = ?1", params![id])?;

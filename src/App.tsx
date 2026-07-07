@@ -532,10 +532,95 @@ function HomeScreen({
   onFinished: () => void;
 }) {
   return (
-    <section className="panel">
-      <RecordBar onFinished={onFinished} />
-      <AgendaList hasIcs={hasIcs} recordAll={recordAll} autoSync={autoSync} />
+    <section className="panel home-layout">
+      <div className="home-main">
+        <RecordBar onFinished={onFinished} />
+        <AgendaList hasIcs={hasIcs} recordAll={recordAll} autoSync={autoSync} />
+      </div>
+      <LiveNotes />
     </section>
+  );
+}
+
+/// Painel lateral de anotações manuais, visível só durante a gravação. As notas
+/// são salvas automaticamente (debounce) e vinculadas à gravação em andamento.
+function LiveNotes() {
+  const [recording, setRecording] = useState(false);
+  const [recId, setRecId] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const saveTimer = useRef<number | null>(null);
+
+  async function loadFor(id: string | null) {
+    setRecId(id);
+    setStatus("idle");
+    if (id) {
+      const n = await invoke<string | null>("get_notes", { recordingId: id }).catch(() => "");
+      setNotes(n ?? "");
+    } else {
+      setNotes("");
+    }
+  }
+
+  useEffect(() => {
+    invoke<boolean>("is_recording")
+      .then(async (r) => {
+        setRecording(r);
+        if (r) {
+          const id = await invoke<string | null>("current_recording_id").catch(() => null);
+          await loadFor(id);
+        }
+      })
+      .catch(() => {});
+    const un = listen<boolean>("recording-changed", async (e) => {
+      setRecording(e.payload);
+      if (e.payload) {
+        const id = await invoke<string | null>("current_recording_id").catch(() => null);
+        await loadFor(id);
+      }
+      // Ao parar não limpamos um save pendente: ele ainda dispara com o id certo.
+    });
+    return () => {
+      un.then((f) => f());
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function onChange(v: string) {
+    setNotes(v);
+    const id = recId;
+    if (!id) return;
+    setStatus("saving");
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      try {
+        await invoke("save_notes", { recordingId: id, notes: v });
+        setStatus("saved");
+      } catch (e) {
+        logClient("anotacoes", e);
+        setStatus("idle");
+      }
+    }, 600);
+  }
+
+  if (!recording) return null;
+
+  return (
+    <aside className="live-notes">
+      <div className="live-notes-head">
+        <h3>Anotações da reunião</h3>
+        <span className="notes-status">
+          {status === "saving" ? "Salvando..." : status === "saved" ? "Salvo" : ""}
+        </span>
+      </div>
+      <textarea
+        className="live-notes-area"
+        value={notes}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Escreva suas anotações durante a reunião. São salvas automaticamente e usadas para enriquecer o resumo depois."
+      />
+    </aside>
   );
 }
 
@@ -827,9 +912,14 @@ function GravacoesScreen({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [summary, setSummary] = useState("");
+  const [summarySaved, setSummarySaved] = useState(""); // último resumo persistido
+  const [savingSummary, setSavingSummary] = useState(false);
   const [sumBusy, setSumBusy] = useState(false);
   const [sumError, setSumError] = useState<string | null>(null);
   const [sumCopied, setSumCopied] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [notesSaved, setNotesSaved] = useState(""); // últimas anotações persistidas
+  const [notesSaving, setNotesSaving] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [playSrc, setPlaySrc] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -946,6 +1036,9 @@ function GravacoesScreen({
   useEffect(() => {
     setText("");
     setSummary("");
+    setSummarySaved("");
+    setNotes("");
+    setNotesSaved("");
     setError(null);
     setSumError(null);
     if (!selectedId) return;
@@ -959,10 +1052,47 @@ function GravacoesScreen({
       .catch(() => {});
     invoke<Summary | null>("get_summary", { recordingId: selectedId })
       .then((s) => {
-        if (s) setSummary(s.text);
+        if (s) {
+          setSummary(s.text);
+          setSummarySaved(s.text);
+        }
+      })
+      .catch(() => {});
+    invoke<string | null>("get_notes", { recordingId: selectedId })
+      .then((n) => {
+        setNotes(n ?? "");
+        setNotesSaved(n ?? "");
       })
       .catch(() => {});
   }, [selectedId]);
+
+  async function saveNotes() {
+    if (!selected) return;
+    setNotesSaving(true);
+    setError(null);
+    try {
+      await invoke("save_notes", { recordingId: selected.id, notes });
+      setNotesSaved(notes);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setNotesSaving(false);
+    }
+  }
+
+  async function saveSummaryEdits() {
+    if (!selectedId) return;
+    setSavingSummary(true);
+    setSumError(null);
+    try {
+      await invoke("set_summary", { recordingId: selectedId, text: summary });
+      setSummarySaved(summary);
+    } catch (e) {
+      setSumError(String(e));
+    } finally {
+      setSavingSummary(false);
+    }
+  }
 
   async function run() {
     setError(null);
@@ -989,6 +1119,7 @@ function GravacoesScreen({
     try {
       const s = await invoke<Summary>("generate_summary", { recordingId: selectedId });
       setSummary(s.text);
+      setSummarySaved(s.text);
     } catch (e) {
       setSumError(String(e));
     } finally {
@@ -1071,6 +1202,27 @@ function GravacoesScreen({
           )}
           {actionMsg && <p className="ok">{actionMsg}</p>}
 
+          {selected && (
+            <div className="summary-block">
+              <h3>Anotações manuais</h3>
+              <p className="hint">
+                Escritas durante a reunião. Entram no resumo para dar mais clareza. Você pode editar
+                aqui.
+              </p>
+              <textarea
+                className="transcript"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Sem anotações para esta gravação."
+              />
+              <div className="actions">
+                <button onClick={saveNotes} disabled={notes === notesSaved || notesSaving}>
+                  {notesSaving ? "Salvando..." : "Salvar alterações"}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="form-row">
             <label>Idioma</label>
             <select value={language} onChange={(e) => setLanguage(e.target.value)}>
@@ -1117,14 +1269,32 @@ function GravacoesScreen({
                 )}
               </div>
               {sumError && <p className="error">{sumError}</p>}
-              {summary && <textarea className="transcript" readOnly value={summary} />}
+              {summary && (
+                <>
+                  <textarea
+                    className="transcript"
+                    value={summary}
+                    onChange={(e) => setSummary(e.target.value)}
+                  />
+                  <div className="actions">
+                    <button
+                      onClick={saveSummaryEdits}
+                      disabled={summary === summarySaved || savingSummary}
+                    >
+                      {savingSummary ? "Salvando..." : "Salvar alterações"}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {text && (
+          {(text || notes.trim()) && (
             <AttioUpload
               recording={recordings.find((r) => r.id === selectedId) ?? null}
+              hasTranscript={!!text}
               hasSummary={!!summary}
+              hasNotes={!!notes.trim()}
               hasAttioKey={hasAttioKey}
               userEmail={attioUserEmail}
             />
@@ -1137,16 +1307,20 @@ function GravacoesScreen({
 
 function AttioUpload({
   recording,
+  hasTranscript,
   hasSummary,
+  hasNotes,
   hasAttioKey,
   userEmail,
 }: {
   recording: Recording | null;
+  hasTranscript: boolean;
   hasSummary: boolean;
+  hasNotes: boolean;
   hasAttioKey: boolean;
   userEmail: string;
 }) {
-  const [kind, setKind] = useState<"transcript" | "summary" | null>(null);
+  const [kind, setKind] = useState<"transcript" | "summary" | "notes" | null>(null);
   const [title, setTitle] = useState("");
   const [candidates, setCandidates] = useState<AttioMeeting[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null); // meeting_id or "new"
@@ -1192,7 +1366,7 @@ function AttioUpload({
     });
   }
 
-  async function start(k: "transcript" | "summary") {
+  async function start(k: "transcript" | "summary" | "notes") {
     setKind(k);
     setCandidates(null);
     setSelected(null);
@@ -1277,7 +1451,7 @@ function AttioUpload({
         <button
           className={kind === "transcript" ? "" : "secondary"}
           onClick={() => start("transcript")}
-          disabled={!hasAttioKey || busy}
+          disabled={!hasAttioKey || !hasTranscript || busy}
         >
           Subir transcrição
         </button>
@@ -1287,6 +1461,13 @@ function AttioUpload({
           disabled={!hasAttioKey || !hasSummary || busy}
         >
           Subir resumo
+        </button>
+        <button
+          className={kind === "notes" ? "" : "secondary"}
+          onClick={() => start("notes")}
+          disabled={!hasAttioKey || !hasNotes || busy}
+        >
+          Subir anotações manuais
         </button>
       </div>
 

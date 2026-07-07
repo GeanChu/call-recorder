@@ -590,6 +590,85 @@ button {
   padding-left: 4px;
 }
 
+/* ---- Home: layout com painel de anotações ao vivo ---- */
+.panel.home-layout {
+  max-width: none;
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.home-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 780px;
+}
+
+.live-notes {
+  position: sticky;
+  top: 0;
+  flex: 0 0 380px;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 80px);
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.live-notes-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.live-notes-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.notes-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.live-notes-area {
+  flex: 1;
+  min-height: 320px;
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  resize: none;
+}
+
+.live-notes-area:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+@media (max-width: 900px) {
+  .panel.home-layout {
+    flex-direction: column;
+  }
+  .live-notes {
+    position: static;
+    flex-basis: auto;
+    width: 100%;
+    max-height: none;
+  }
+}
+
 /* ---- Home: barra de gravação fixa + agenda ---- */
 .record-bar {
   position: sticky;

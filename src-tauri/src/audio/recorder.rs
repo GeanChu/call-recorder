@@ -59,6 +59,11 @@ impl Recorder {
         self.inner.lock().unwrap().is_some()
     }
 
+    /// Id da gravação em andamento (para vincular anotações ao vivo). None se parado.
+    pub fn current_id(&self) -> Option<String> {
+        self.inner.lock().unwrap().as_ref().map(|s| s.id.clone())
+    }
+
     /// Maior pico atual entre microfone e áudio do sistema (0.0..=1.0).
     pub fn level(&self) -> f32 {
         match &*self.inner.lock().unwrap() {
