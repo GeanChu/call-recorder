@@ -53,11 +53,31 @@ jobs:
         run: npm ci
 
       # ffmpeg empacotado como resource (app self-contained).
+      # ffmpeg empacotado como resource (app self-contained). Baixa de um mirror
+      # confiavel no GitHub (BtbN) como primario; cai para o host antigo se
+      # preciso; ate 3 tentativas por URL. Hosts unicos costumavam derrubar o
+      # build (503/timeout) e deixar a release so com macOS.
       - name: Fetch ffmpeg (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          $ErrorActionPreference = "Stop"
+          function Get-Mirror($urls, $out) {
+            foreach ($u in $urls) {
+              for ($i = 1; $i -le 3; $i++) {
+                try {
+                  Invoke-WebRequest -Uri $u -OutFile $out -TimeoutSec 180
+                  Write-Host "baixou de $u"
+                  return
+                } catch { Write-Host "falha $u (tentativa $i): $_"; Start-Sleep 5 }
+              }
+            }
+            throw "nao baixou ffmpeg de nenhum mirror"
+          }
+          Get-Mirror @(
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+            "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          ) "ffmpeg.zip"
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
           $exe = Get-ChildItem ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           Copy-Item $exe.FullName src-tauri/resources/ffmpeg.exe
@@ -70,9 +90,23 @@ jobs:
       - name: Fetch ffmpeg (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
-          curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o ffmpeg.tar.xz
-          mkdir ffmpeg_tmp && tar -xf ffmpeg.tar.xz -C ffmpeg_tmp --strip-components=1
-          cp ffmpeg_tmp/ffmpeg src-tauri/resources/ffmpeg
+          set -e
+          dl() {
+            for u in "$@"; do
+              for i in 1 2 3; do
+                if curl -fL --connect-timeout 30 --max-time 300 "$u" -o ffmpeg_dl; then
+                  echo "baixou de $u"; return 0
+                fi
+                echo "falha $u (tentativa $i)"; sleep 5
+              done
+            done
+            echo "nao baixou ffmpeg de nenhum mirror"; exit 1
+          }
+          dl "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+             "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          mkdir ffmpeg_tmp && tar -xf ffmpeg_dl -C ffmpeg_tmp
+          bin=$(find ffmpeg_tmp -type f -name ffmpeg | head -1)
+          cp "$bin" src-tauri/resources/ffmpeg
           chmod +x src-tauri/resources/ffmpeg
           for c in libopus libmp3lame; do \
             src-tauri/resources/ffmpeg -hide_banner -encoders | grep -q "$c" || { echo "ffmpeg sem encoder $c"; exit 1; }; \
@@ -81,7 +115,14 @@ jobs:
       - name: Fetch ffmpeg (macOS)
         if: matrix.platform == 'macos-latest'
         run: |
-          curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
+          set -e
+          for i in 1 2 3; do
+            if curl -fL --connect-timeout 30 --max-time 300 https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip; then
+              echo "baixou ffmpeg"; break
+            fi
+            echo "falha ao baixar ffmpeg (tentativa $i)"; sleep 5
+            [ "$i" = 3 ] && { echo "nao baixou ffmpeg"; exit 1; }
+          done
           unzip -o ffmpeg.zip -d ffmpeg_tmp
           cp ffmpeg_tmp/ffmpeg src-tauri/resources/ffmpeg
           chmod +x src-tauri/resources/ffmpeg
