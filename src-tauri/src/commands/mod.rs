@@ -240,13 +240,28 @@ fn ensure_mixed(app: &AppHandle, recording_id: &str) -> Result<PathBuf, String> 
     }
 }
 
-/// Prepara o arquivo de reprodução e devolve o caminho absoluto (a UI converte
-/// com convertFileSrc). Mixa mic+sistema no primeiro uso.
+/// Arquivo para o player do webview: MP3. O webview do macOS é WebKit (Safari),
+/// que NÃO decodifica Ogg/Opus — as gravações são Opus/Ogg, então tocavam no
+/// Windows (WebView2/Chromium) mas ficavam mudas no Mac. MP3 toca em todos os
+/// webviews. Gera `playback.mp3` sob demanda a partir da faixa mixada e cacheia.
+fn ensure_playback(app: &AppHandle, recording_id: &str) -> Result<PathBuf, String> {
+    let src = ensure_mixed(app, recording_id)?;
+    let mp3 = src.with_file_name("playback.mp3");
+    if mp3.exists() {
+        return Ok(mp3);
+    }
+    let ffmpeg = resolve_ffmpeg(app);
+    encode::transcode(&ffmpeg, &src, &mp3).map_err(|e| fail(app, "gravacao", e.to_string()))?;
+    Ok(mp3)
+}
+
+/// Prepara o arquivo de reprodução (MP3) e devolve o caminho absoluto (a UI
+/// converte com convertFileSrc). Mixa mic+sistema e transcodifica no 1º uso.
 #[tauri::command]
 pub async fn prepare_playback(app: AppHandle, recording_id: String) -> Result<String, String> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_mixed(&app2, &recording_id).map(|p| p.to_string_lossy().into_owned())
+        ensure_playback(&app2, &recording_id).map(|p| p.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
