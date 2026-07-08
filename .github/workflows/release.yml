@@ -17,20 +17,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Fixado em macos-14 (Xcode 15 / SDK 14): a imagem `macos-latest`
-          # rotacionou para um Xcode/SDK novo que quebra o build Swift da dep
-          # transitiva apple-metal (via screencapturekit) — "cannot find
-          # MTLSamplerReductionMode in scope". macos-14 é o ambiente que compilou
-          # da 0.2.13 à 0.2.18.
-          - platform: macos-14
+          # macos-15 tem Xcode 26 (SDK do macOS 26), exigido pela dep transitiva
+          # apple-metal (via screencapturekit). O passo "Selecionar Xcode 26"
+          # abaixo fixa esse Xcode antes do build. `extra-args` liga a feature
+          # `macos-system-audio` só no macOS (captura do áudio do sistema).
+          - platform: macos-15
             target: universal-apple-darwin
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            extra-args: '--features macos-system-audio'
           - platform: ubuntu-22.04
             target: ''
             rust-targets: ''
+            extra-args: ''
           - platform: windows-latest
             target: ''
             rust-targets: ''
+            extra-args: ''
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +44,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust-targets }}
+
+      # apple-metal (via screencapturekit) compila Swift contra o SDK do macOS 26;
+      # o Xcode default do runner é mais antigo e falta os simbolos (MTLResidencySet
+      # etc.). Fixa o Xcode 26 mais novo disponivel antes de compilar.
+      - name: Selecionar Xcode 26
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$xc" ]; then echo "Xcode 26 nao encontrado no runner"; exit 1; fi
+          echo "usando $xc"
+          sudo xcode-select -s "$xc/Contents/Developer"
+          xcodebuild -version
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -118,7 +132,7 @@ jobs:
           done
 
       - name: Fetch ffmpeg (macOS)
-        if: matrix.platform == 'macos-14'
+        if: startsWith(matrix.platform, 'macos')
         run: |
           set -e
           for i in 1 2 3; do
@@ -148,4 +162,4 @@ jobs:
           prerelease: false
           # Gera e anexa o latest.json (manifesto do updater) ao release.
           includeUpdaterJson: true
-          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          args: ${{ format('{0} {1}', matrix.target && format('--target {0}', matrix.target) || '', matrix.extra-args) }}

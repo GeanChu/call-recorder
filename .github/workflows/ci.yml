@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04, macos-14, windows-latest]
+        platform: [ubuntu-22.04, macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -34,11 +34,27 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev
 
+      # macOS: fixa o Xcode 26 (SDK do macOS 26) exigido pelo apple-metal quando
+      # a feature macos-system-audio esta ligada.
+      - name: Selecionar Xcode 26 (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$xc" ]; then sudo xcode-select -s "$xc/Contents/Developer"; fi
+          xcodebuild -version || true
+
       - name: Install frontend deps
         run: npm ci
 
       - name: Build frontend
         run: npm run build
 
+      # No macOS compila com a captura do sistema ligada (mesma config do release).
       - name: Build Rust (compila o backend Tauri)
-        run: cargo build --manifest-path src-tauri/Cargo.toml
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cargo build --manifest-path src-tauri/Cargo.toml --features macos-system-audio
+          else
+            cargo build --manifest-path src-tauri/Cargo.toml
+          fi
