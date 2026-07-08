@@ -109,6 +109,17 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         )",
         [],
     )?;
+    // Base de prompts de resumo nomeados (CRUD na aba "Prompts de resumo").
+    // Fica no callrec.db em app-data, então sobrevive a atualizações do app.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS summary_prompts (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS meetings (
             uid            TEXT PRIMARY KEY,
@@ -250,6 +261,53 @@ pub fn get_notes(conn: &Connection, recording_id: &str) -> Result<Option<String>
         )
         .optional()?;
     Ok(v)
+}
+
+#[derive(Serialize, Clone)]
+pub struct SummaryPromptRow {
+    pub id: String,
+    pub name: String,
+    pub text: String,
+    pub created_at: i64,
+}
+
+pub fn list_summary_prompts(conn: &Connection) -> Result<Vec<SummaryPromptRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, text, created_at FROM summary_prompts ORDER BY name COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(SummaryPromptRow {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            text: r.get(2)?,
+            created_at: r.get(3)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn upsert_summary_prompt(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    text: &str,
+    created_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO summary_prompts (id, name, text, created_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, text = excluded.text",
+        params![id, name, text, created_at],
+    )?;
+    Ok(())
+}
+
+pub fn delete_summary_prompt(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM summary_prompts WHERE id = ?1", params![id])?;
+    Ok(())
 }
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {

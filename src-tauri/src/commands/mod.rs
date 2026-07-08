@@ -881,6 +881,42 @@ pub fn default_summary_prompt() -> String {
     summary::default_prompt().to_string()
 }
 
+/// Lista os prompts de resumo salvos (base de prompts, sobrevive a updates).
+#[tauri::command]
+pub fn list_summary_prompts(app: AppHandle) -> Result<Vec<storage::SummaryPromptRow>, String> {
+    let r = open_db(&app)
+        .and_then(|conn| storage::list_summary_prompts(&conn).map_err(|e| e.to_string()));
+    logged(&app, "resumo", r)
+}
+
+/// Cria (id vazio) ou atualiza um prompt de resumo nomeado. Retorna o id.
+#[tauri::command]
+pub fn save_summary_prompt(
+    app: AppHandle,
+    id: Option<String>,
+    name: String,
+    text: String,
+) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("dê um nome ao prompt".to_string());
+    }
+    let id = id.filter(|i| !i.trim().is_empty()).unwrap_or_else(new_id);
+    let r = open_db(&app).and_then(|conn| {
+        storage::upsert_summary_prompt(&conn, &id, name, &text, now_ms())
+            .map_err(|e| e.to_string())
+    });
+    logged(&app, "resumo", r).map(|_| id)
+}
+
+/// Apaga um prompt de resumo da base.
+#[tauri::command]
+pub fn delete_summary_prompt(app: AppHandle, id: String) -> Result<(), String> {
+    let r = open_db(&app)
+        .and_then(|conn| storage::delete_summary_prompt(&conn, &id).map_err(|e| e.to_string()));
+    logged(&app, "resumo", r)
+}
+
 #[tauri::command]
 pub fn get_summary(app: AppHandle, recording_id: String) -> Result<Option<SummaryRow>, String> {
     let r = open_db(&app)

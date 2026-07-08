@@ -13,7 +13,14 @@ function logClient(category: string, message: unknown) {
   invoke("log_client", { category, message: String(message) }).catch(() => {});
 }
 
-type Tab = "agenda" | "gravacoes" | "config";
+type Tab = "agenda" | "gravacoes" | "prompts" | "config";
+
+type SummaryPrompt = {
+  id: string;
+  name: string;
+  text: string;
+  created_at: number;
+};
 
 type Meeting = {
   uid: string;
@@ -82,6 +89,7 @@ type Summary = {
 const TABS: { id: Tab; label: string }[] = [
   { id: "agenda", label: "Home" },
   { id: "gravacoes", label: "Gravações" },
+  { id: "prompts", label: "Prompts de resumo" },
 ];
 
 const LANGUAGES: { code: string; label: string }[] = [
@@ -239,6 +247,15 @@ function icon(name: string) {
           <line x1="9" y1="17" x2="13" y2="17" />
         </svg>
       );
+    case "prompts":
+      return (
+        <svg {...c}>
+          <path d="M4 6h16" />
+          <path d="M4 12h10" />
+          <path d="M4 18h7" />
+          <path d="M18 15l3 3-3 3" />
+        </svg>
+      );
     case "agenda":
       return (
         <svg {...c}>
@@ -298,8 +315,17 @@ function App() {
   const [tab, setTab] = useState<Tab>("agenda");
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [prompts, setPrompts] = useState<SummaryPrompt[]>([]);
   const [update, setUpdate] = useState<{ version: string } | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
+
+  const refreshPrompts = useCallback(async () => {
+    try {
+      setPrompts(await invoke<SummaryPrompt[]>("list_summary_prompts"));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Janela-toast de reunião começando (aberta pelo scheduler com ?alert=1).
   const isAlert = new URLSearchParams(window.location.search).get("alert") === "1";
@@ -323,7 +349,8 @@ function App() {
   useEffect(() => {
     refreshRecordings();
     refreshSettings();
-  }, [refreshRecordings, refreshSettings]);
+    refreshPrompts();
+  }, [refreshRecordings, refreshSettings, refreshPrompts]);
 
   // Aplica o tema escolhido no <html> (system=sem atributo, segue o SO).
   useEffect(() => {
@@ -436,9 +463,11 @@ function App() {
             hasAttioKey={settings?.has_attio_key ?? false}
             attioUserEmail={settings?.attio_user_email ?? ""}
             baseSummaryPrompt={settings?.summary_prompt ?? ""}
+            prompts={prompts}
             onChanged={refreshRecordings}
           />
         )}
+        {tab === "prompts" && <PromptsScreen prompts={prompts} onChanged={refreshPrompts} />}
         {tab === "config" && <ConfigScreen settings={settings} onSaved={refreshSettings} />}
       </main>
     </div>
@@ -919,6 +948,7 @@ function GravacoesScreen({
   hasAttioKey,
   attioUserEmail,
   baseSummaryPrompt,
+  prompts,
   onChanged,
 }: {
   recordings: Recording[];
@@ -928,6 +958,7 @@ function GravacoesScreen({
   hasAttioKey: boolean;
   attioUserEmail: string;
   baseSummaryPrompt: string;
+  prompts: SummaryPrompt[];
   onChanged: () => void;
 }) {
   const [selectedId, setSelectedId] = useState("");
@@ -944,6 +975,7 @@ function GravacoesScreen({
   const [sumCopied, setSumCopied] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [promptOverride, setPromptOverride] = useState("");
+  const [selectedPromptId, setSelectedPromptId] = useState(""); // "" = prompt base
   const [notes, setNotes] = useState("");
   const [notesSaved, setNotesSaved] = useState(""); // últimas anotações persistidas
   const [notesSaving, setNotesSaving] = useState(false);
@@ -1084,6 +1116,7 @@ function GravacoesScreen({
     setSumError(null);
     setEditingPrompt(false);
     setPromptOverride("");
+    setSelectedPromptId("");
     if (!selectedId) return;
     invoke<Transcript | null>("get_transcript", { recordingId: selectedId })
       .then((t) => {
@@ -1160,7 +1193,9 @@ function GravacoesScreen({
     setSumError(null);
     setSumBusy(true);
     try {
-      const prompt = editingPrompt && promptOverride.trim() ? promptOverride : null;
+      // A caixa de texto é a fonte: prompt escolhido/editado sobrescreve só este
+      // resumo; vazio usa o prompt base das Configurações.
+      const prompt = promptOverride.trim() ? promptOverride : null;
       const s = await invoke<Summary>("generate_summary", { recordingId: selectedId, prompt });
       setSummary(s.text);
       setSummarySaved(s.text);
@@ -1168,6 +1203,19 @@ function GravacoesScreen({
       setSumError(String(e));
     } finally {
       setSumBusy(false);
+    }
+  }
+
+  // Escolhe um prompt da base: carrega o texto na caixa (editável só p/ este
+  // resumo, sem alterar o registro da base). "" = usar o prompt base.
+  function pickPrompt(id: string) {
+    setSelectedPromptId(id);
+    setEditingPrompt(true);
+    if (id === "") {
+      setPromptOverride(baseSummaryPrompt);
+    } else {
+      const p = prompts.find((x) => x.id === id);
+      if (p) setPromptOverride(p.text);
     }
   }
 
@@ -1334,6 +1382,18 @@ function GravacoesScreen({
                 <button onClick={makeSummary} disabled={sumBusy || !hasSummaryKey}>
                   {sumBusy ? "Resumindo..." : summary ? "Refazer resumo" : "Gerar resumo"}
                 </button>
+                <select
+                  value={selectedPromptId}
+                  onChange={(e) => pickPrompt(e.target.value)}
+                  title="Prompt usado neste resumo"
+                >
+                  <option value="">Prompt base (Configurações)</option>
+                  {prompts.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
                 {summary && (
                   <button className="secondary" onClick={copySummary}>
                     {sumCopied ? "Copiado!" : "Copiar resumo"}
@@ -1346,8 +1406,8 @@ function GravacoesScreen({
               {editingPrompt && (
                 <div className="prompt-editor">
                   <p className="hint">
-                    Só afeta este resumo. Clique em "Refazer resumo" para aplicar. O prompt base fica
-                    em Configurações.
+                    Editar aqui afeta só este resumo — não altera o prompt salvo na base. Clique em
+                    "Refazer resumo" para aplicar. Gerencie a base na aba "Prompts de resumo".
                   </p>
                   <textarea
                     className="transcript"
@@ -1356,8 +1416,17 @@ function GravacoesScreen({
                     placeholder="Instruções para o modelo gerar o resumo..."
                   />
                   <div className="actions">
-                    <button className="secondary" onClick={() => setPromptOverride(baseSummaryPrompt)}>
-                      Restaurar prompt base
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        const src =
+                          selectedPromptId === ""
+                            ? baseSummaryPrompt
+                            : prompts.find((p) => p.id === selectedPromptId)?.text ?? baseSummaryPrompt;
+                        setPromptOverride(src);
+                      }}
+                    >
+                      Restaurar prompt selecionado
                     </button>
                   </div>
                 </div>
@@ -1707,6 +1776,142 @@ function AttioUpload({
       {error && <p className="error">{error}</p>}
       {result && <p className="ok">{result}</p>}
     </div>
+  );
+}
+
+/// Aba de gerência da base de prompts de resumo (criar/renomear/editar/apagar).
+/// Os prompts ficam no banco (app-data) e sobrevivem a atualizações.
+function PromptsScreen({
+  prompts,
+  onChanged,
+}: {
+  prompts: SummaryPrompt[];
+  onChanged: () => void;
+}) {
+  const NEW = "__new__";
+  const [selectedId, setSelectedId] = useState(NEW);
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Carrega o prompt escolhido no formulário; NEW limpa para criar um novo.
+  function select(id: string) {
+    setSelectedId(id);
+    setMsg(null);
+    setError(null);
+    if (id === NEW) {
+      setName("");
+      setText("");
+    } else {
+      const p = prompts.find((x) => x.id === id);
+      setName(p?.name ?? "");
+      setText(p?.text ?? "");
+    }
+  }
+
+  async function save() {
+    setError(null);
+    setMsg(null);
+    if (!name.trim()) {
+      setError("Dê um nome ao prompt.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const id = await invoke<string>("save_summary_prompt", {
+        id: selectedId === NEW ? null : selectedId,
+        name,
+        text,
+      });
+      setSelectedId(id);
+      setMsg("Prompt salvo.");
+      onChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (selectedId === NEW) return;
+    if (!window.confirm(`Apagar o prompt "${name}"?`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("delete_summary_prompt", { id: selectedId });
+      select(NEW);
+      onChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty =
+    selectedId === NEW
+      ? !!name.trim() || !!text.trim()
+      : (() => {
+          const p = prompts.find((x) => x.id === selectedId);
+          return !p || p.name !== name || p.text !== text;
+        })();
+
+  return (
+    <section className="panel">
+      <h2>Prompts de resumo</h2>
+      <p className="hint">
+        Crie prompts nomeados para gerar resumos com estilos diferentes. Escolha um deles ao gerar
+        o resumo de uma reunião (aba Gravações). A base fica salva e sobrevive a atualizações.
+      </p>
+
+      <div className="form-row">
+        <label>Prompt</label>
+        <select value={selectedId} onChange={(e) => select(e.target.value)}>
+          <option value={NEW}>➕ Novo prompt</option>
+          {prompts.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="form-row">
+        <label>Nome</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Ex.: Ata formal, Bullet points, Follow-up comercial"
+        />
+      </div>
+
+      <div className="form-row" style={{ maxWidth: 760 }}>
+        <label>Instruções (prompt)</label>
+        <textarea
+          className="transcript"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Instruções para o modelo gerar o resumo..."
+        />
+      </div>
+
+      <div className="actions">
+        <button onClick={save} disabled={busy || !dirty}>
+          {busy ? "Salvando..." : selectedId === NEW ? "Criar prompt" : "Salvar alterações"}
+        </button>
+        {selectedId !== NEW && (
+          <button className="secondary" onClick={remove} disabled={busy}>
+            Apagar
+          </button>
+        )}
+      </div>
+
+      {msg && <p className="ok">{msg}</p>}
+      {error && <p className="error">{error}</p>}
+    </section>
   );
 }
 
