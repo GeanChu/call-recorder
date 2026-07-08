@@ -210,10 +210,14 @@ mod windows_impl {
 
             let format =
                 WaveFormat::new(32, 32, &SampleType::Float, SAMPLE_RATE as usize, CHANNELS as usize, None);
-            let (_def_time, min_time) = audio_client.get_device_period().map_err(wasapi_err)?;
+            // buffer_duration_hns DEVE ser 0 (default do device). Passar o
+            // período mínimo do device aqui quebrava o loopback em alguns
+            // drivers (C-Media): initialize ok, mas 0 eventos e 0 frames —
+            // gravação do sistema saía vazia. Reproduzido e validado em teste
+            // local (system_probe): min_time → 0 eventos; 0 → fluxo completo.
             let mode = StreamMode::EventsShared {
                 autoconvert: true,
-                buffer_duration_hns: min_time,
+                buffer_duration_hns: 0,
             };
             audio_client
                 .initialize_client(&format, &Direction::Capture, &mode)
