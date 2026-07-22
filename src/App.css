@@ -853,6 +853,60 @@ button {
   background: var(--accent-hover);
 }
 
+/* ---- Busca na transcrição / resumo ---- */
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  max-width: 760px;
+}
+
+.search-row input {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.search-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-row button {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.search-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+mark.hl {
+  background: #fde68a;
+  color: #1a1c1f;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Na bolha do próprio usuário (fundo accent) o amarelo precisa contrastar. */
+.chat-msg.me mark.hl {
+  background: #fbbf24;
+}
+
 /* ---- Transcrição em chat ---- */
 .chat {
   display: flex;

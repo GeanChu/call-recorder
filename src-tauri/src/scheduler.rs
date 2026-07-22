@@ -94,6 +94,16 @@ fn tick(app: &AppHandle, triggered: &mut HashSet<String>) {
     let recorder = app.state::<Recorder>();
 
     if recorder.is_recording() {
+        // Lembrete de hora em hora: a gravação pode ter sido esquecida ligada.
+        if let Some(hours) = recorder.should_alert_running() {
+            logs::log(app, "INFO", "gravacao", &format!("lembrete: gravando há {hours}h"));
+            notify(
+                app,
+                "Gravação em andamento",
+                &format!("O Hicorder está gravando há {hours}h. Pare se a reunião já terminou."),
+            );
+            show_recording_toast(app, hours);
+        }
         if recorder.should_alert_end(now) {
             notify(
                 app,
@@ -161,12 +171,25 @@ fn tick(app: &AppHandle, triggered: &mut HashSet<String>) {
 fn show_meeting_toast(app: &AppHandle, title: &str, end_ms: i64) {
     let app_main = app.clone();
     let title = title.to_string();
-    if let Err(e) = app.run_on_main_thread(move || build_toast(&app_main, &title, end_ms)) {
+    if let Err(e) = app.run_on_main_thread(move || build_toast(&app_main, "meeting", &title, end_ms))
+    {
         logs::log(app, "ERRO", "agenda", &format!("run_on_main_thread falhou: {e}"));
     }
 }
 
-fn build_toast(app: &AppHandle, title: &str, end_ms: i64) {
+/// Lembrete de gravação longa, com botão de parar direto do toast.
+fn show_recording_toast(app: &AppHandle, hours: u32) {
+    let app_main = app.clone();
+    if let Err(e) =
+        app.run_on_main_thread(move || build_toast(&app_main, "recording", "", hours as i64))
+    {
+        logs::log(app, "ERRO", "gravacao", &format!("run_on_main_thread falhou: {e}"));
+    }
+}
+
+/// `kind`: "meeting" (reunião começando) ou "recording" (lembrete de gravação).
+/// `value`: fim previsto em unix ms para "meeting", horas gravadas para "recording".
+fn build_toast(app: &AppHandle, kind: &str, title: &str, value: i64) {
     // Uma por vez: destrói toasts anteriores ainda abertos. `close()` é
     // assíncrono e o label continuava vivo, colidindo na criação seguinte
     // ("a webview with label `meeting-alert` already exists"); destroy() é
@@ -177,9 +200,8 @@ fn build_toast(app: &AppHandle, title: &str, end_ms: i64) {
         }
     }
     let url = format!(
-        "index.html?alert=1&title={}&end={}",
+        "index.html?alert=1&kind={kind}&title={}&end={value}",
         urlencode(title),
-        end_ms
     );
     let (w, h) = (380.0, 140.0);
     let label = format!("meeting-alert-{}", now_ms());

@@ -29,6 +29,8 @@ struct ActiveSession {
     meeting_end_ms: Option<i64>,
     /// Se o alerta de fim de reunião já foi disparado.
     end_alerted: AtomicBool,
+    /// Quantas horas de gravação já foram avisadas (lembrete "ainda gravando").
+    hours_alerted: AtomicU32,
 }
 
 #[derive(Default)]
@@ -136,8 +138,22 @@ impl Recorder {
             started: Instant::now(),
             meeting_end_ms,
             end_alerted: AtomicBool::new(false),
+            hours_alerted: AtomicU32::new(0),
         });
         Ok(RecordingInfo { id })
+    }
+
+    /// Horas cheias de gravação ainda não avisadas — o usuário pode ter esquecido
+    /// de parar. Devolve Some(horas) uma única vez por hora completada.
+    pub fn should_alert_running(&self) -> Option<u32> {
+        let guard = self.inner.lock().unwrap();
+        let s = guard.as_ref()?;
+        let hours = (s.started.elapsed().as_secs() / 3600) as u32;
+        if hours > s.hours_alerted.load(Ordering::Relaxed) {
+            s.hours_alerted.store(hours, Ordering::Relaxed);
+            return Some(hours);
+        }
+        None
     }
 
     /// True (uma única vez) quando passou do fim previsto da reunião em andamento.

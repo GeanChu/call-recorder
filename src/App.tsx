@@ -475,7 +475,7 @@ function App() {
 }
 
 /// Transcrição em formato de chat: "Você" à direita, "Participantes" à esquerda.
-function ChatTranscript({ text }: { text: string }) {
+function ChatTranscript({ text, query = "" }: { text: string; query?: string }) {
   const re = /^\[(\d{2}:\d{2}(?::\d{2})?)\]\s*(Você|Participantes):\s*(.*)$/;
   const lines = text.split("\n");
   const parsed = lines.map((l) => {
@@ -488,33 +488,70 @@ function ChatTranscript({ text }: { text: string }) {
     return <textarea className="transcript" readOnly value={text} />;
   }
 
+  // Com busca ativa, mostra só as falas que casam (destacadas).
+  const q = query.trim().toLowerCase();
+  const hits = parsed.map((p, i) => {
+    const line = p ? p.text : lines[i];
+    return !q || (line ?? "").toLowerCase().includes(q);
+  });
+
   return (
     <div className="chat">
-      {parsed.map((p, i) =>
-        p ? (
+      {parsed.map((p, i) => {
+        if (!hits[i]) return null;
+        return p ? (
           <div key={i} className={p.who === "Você" ? "chat-msg me" : "chat-msg them"}>
             <div className="chat-bubble">
               <span className="chat-meta">
                 {p.who} · {p.time}
               </span>
-              {p.text}
+              <Highlight text={p.text} query={query} />
             </div>
           </div>
         ) : (
           lines[i].trim() && (
             <div key={i} className="chat-msg them">
-              <div className="chat-bubble">{lines[i]}</div>
+              <div className="chat-bubble">
+                <Highlight text={lines[i]} query={query} />
+              </div>
             </div>
           )
-        ),
-      )}
+        );
+      })}
+      {q && !hits.some(Boolean) && <p className="hint">Nenhum trecho encontrado.</p>}
     </div>
   );
 }
 
-/// Janela-toast: reunião começando, com botão de iniciar gravação.
+/// Destaca as ocorrências de `query` dentro de `text` (sem regex — o termo
+/// pode conter caracteres especiais).
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const at = lower.indexOf(needle, from);
+    if (at === -1) break;
+    if (at > from) parts.push(text.slice(from, at));
+    parts.push(
+      <mark key={`${at}-${parts.length}`} className="hl">
+        {text.slice(at, at + needle.length)}
+      </mark>,
+    );
+    from = at + needle.length;
+  }
+  parts.push(text.slice(from));
+  return <>{parts}</>;
+}
+
+/// Janela-toast. Dois tipos: `meeting` (reunião começando → iniciar gravação)
+/// e `recording` (lembrete horário de gravação em andamento → parar).
 function MeetingAlert() {
   const params = new URLSearchParams(window.location.search);
+  const kind = params.get("kind") ?? "meeting";
   const title = params.get("title") ?? "Reunião";
   const endMs = Number(params.get("end") ?? 0);
   const [busy, setBusy] = useState(false);
@@ -531,7 +568,7 @@ function MeetingAlert() {
     }
   }
 
-  // Auto-dispensa após 60s: alerta de "reunião começando" não deve persistir.
+  // Auto-dispensa após 60s: nenhum dos alertas deve ficar preso na tela.
   useEffect(() => {
     const t = window.setTimeout(close, 60_000);
     return () => window.clearTimeout(t);
@@ -546,6 +583,43 @@ function MeetingAlert() {
     } catch {
       setBusy(false);
     }
+  }
+
+  async function stop() {
+    setBusy(true);
+    try {
+      await invoke("stop_recording");
+      await close();
+    } catch (e) {
+      logClient("gravacao", `toast: falha ao parar: ${String(e)}`);
+      setBusy(false);
+    }
+  }
+
+  // `end` carrega as horas gravadas quando kind = recording.
+  if (kind === "recording") {
+    const hours = endMs;
+    return (
+      <div className="meeting-toast">
+        <div className="meeting-toast-body">
+          <img src="/icon.png" alt="" width={32} height={32} />
+          <div>
+            <strong>Gravação em andamento</strong>
+            <p>
+              Gravando há {hours}h. Esqueceu de parar?
+            </p>
+          </div>
+        </div>
+        <div className="meeting-toast-actions">
+          <button onClick={stop} disabled={busy}>
+            {busy ? "Parando..." : "Parar gravação"}
+          </button>
+          <button className="secondary" onClick={close}>
+            Continuar gravando
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -973,6 +1047,11 @@ function GravacoesScreen({
   const [sumBusy, setSumBusy] = useState(false);
   const [sumError, setSumError] = useState<string | null>(null);
   const [sumCopied, setSumCopied] = useState(false);
+  const [textQuery, setTextQuery] = useState("");
+  const [sumQuery, setSumQuery] = useState("");
+  const [sumHits, setSumHits] = useState<number | null>(null);
+  const summaryRef = useRef<HTMLTextAreaElement | null>(null);
+  const sumFrom = useRef(0);
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [promptOverride, setPromptOverride] = useState("");
   const [selectedPromptId, setSelectedPromptId] = useState(""); // "" = prompt base
@@ -1112,6 +1191,8 @@ function GravacoesScreen({
     setSummarySaved("");
     setNotes("");
     setNotesSaved("");
+    setTextQuery("");
+    setSumQuery("");
     setError(null);
     setSumError(null);
     setEditingPrompt(false);
@@ -1155,6 +1236,29 @@ function GravacoesScreen({
       setNotesSaving(false);
     }
   }
+
+  // Busca no resumo: seleciona a próxima ocorrência dentro do textarea (o
+  // navegador rola até a seleção). Repetir avança; ao chegar no fim, volta ao
+  // início. Não dá para destacar dentro de um textarea, então selecionamos.
+  function findInSummary() {
+    const q = sumQuery.trim().toLowerCase();
+    const el = summaryRef.current;
+    if (!q || !el) return;
+    const hay = summary.toLowerCase();
+    setSumHits(hay.split(q).length - 1);
+    let at = hay.indexOf(q, sumFrom.current);
+    if (at === -1) at = hay.indexOf(q); // volta ao início
+    if (at === -1) return;
+    sumFrom.current = at + q.length;
+    el.focus();
+    el.setSelectionRange(at, at + q.length);
+  }
+
+  // Termo novo (ou resumo trocado) reinicia a varredura.
+  useEffect(() => {
+    sumFrom.current = 0;
+    setSumHits(null);
+  }, [sumQuery, selectedId]);
 
   async function saveSummaryEdits() {
     if (!selectedId) return;
@@ -1370,7 +1474,24 @@ function GravacoesScreen({
           </div>
 
           {error && <p className="error">{error}</p>}
-          {text && <ChatTranscript text={text} />}
+          {text && (
+            <>
+              <div className="search-row">
+                <input
+                  type="search"
+                  value={textQuery}
+                  onChange={(e) => setTextQuery(e.target.value)}
+                  placeholder="Buscar na transcrição..."
+                />
+                {textQuery && (
+                  <button className="secondary" onClick={() => setTextQuery("")}>
+                    Limpar
+                  </button>
+                )}
+              </div>
+              <ChatTranscript text={text} query={textQuery} />
+            </>
+          )}
 
           {text && (
             <div className="summary-block">
@@ -1434,7 +1555,25 @@ function GravacoesScreen({
               {sumError && <p className="error">{sumError}</p>}
               {summary && (
                 <>
+                  <div className="search-row">
+                    <input
+                      type="search"
+                      value={sumQuery}
+                      onChange={(e) => setSumQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && findInSummary()}
+                      placeholder="Buscar no resumo..."
+                    />
+                    <button className="secondary" onClick={findInSummary} disabled={!sumQuery.trim()}>
+                      Buscar
+                    </button>
+                    {sumHits !== null && (
+                      <span className="hint">
+                        {sumHits === 0 ? "Nada encontrado" : `${sumHits} ocorrência(s)`}
+                      </span>
+                    )}
+                  </div>
                   <textarea
+                    ref={summaryRef}
                     className="transcript"
                     value={summary}
                     onChange={(e) => setSummary(e.target.value)}
