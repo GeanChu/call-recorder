@@ -118,6 +118,23 @@ fn tick(app: &AppHandle, triggered: &mut HashSet<String>) {
                 "Gravação encerrada",
                 "Passou 1h do fim da reunião — a gravação foi parada automaticamente.",
             );
+            return;
+        }
+        // Auto-stop global por tempo (Configurações). 0 = desligado.
+        let limit_min = commands::open_db(app)
+            .ok()
+            .and_then(|c| storage::get_setting(&c, "auto_stop_minutes").ok().flatten())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(120);
+        if limit_min > 0 && recorder.elapsed_secs() >= limit_min * 60 {
+            let _ = commands::stop_recording_core(app);
+            let label = fmt_duration(limit_min);
+            logs::log(app, "INFO", "gravacao", &format!("auto-stop por tempo: {label}"));
+            notify(
+                app,
+                "Gravação encerrada",
+                &format!("Limite de {label} atingido — a gravação foi parada automaticamente."),
+            );
         }
         return;
     }
@@ -265,6 +282,17 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
     let _ = app.run_on_main_thread(move || {
         let _ = handle.notification().builder().title(title).body(body).show();
     });
+}
+
+/// "45min", "2h", "1h30" para o texto do aviso.
+fn fmt_duration(minutes: u64) -> String {
+    if minutes < 60 {
+        format!("{minutes}min")
+    } else if minutes % 60 == 0 {
+        format!("{}h", minutes / 60)
+    } else {
+        format!("{}h{}", minutes / 60, minutes % 60)
+    }
 }
 
 fn now_ms() -> i64 {

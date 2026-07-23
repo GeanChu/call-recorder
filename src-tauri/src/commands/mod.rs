@@ -37,6 +37,8 @@ pub struct AppSettings {
     pub theme: String,
     /// Sincronizar a agenda automaticamente ao abrir o app.
     pub auto_sync_agenda: bool,
+    /// Parar a gravação automaticamente após X minutos (0 = desligado).
+    pub auto_stop_minutes: i64,
 }
 
 #[derive(Serialize, Clone)]
@@ -379,6 +381,11 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         .map_err(|e| e.to_string())?
         .map(|v| v != "0")
         .unwrap_or(true);
+    // Default: parar em 2h (120 min). 0 = desligado.
+    let auto_stop_minutes = storage::get_setting(&conn, "auto_stop_minutes")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(120);
     Ok(AppSettings {
         default_language,
         endpoint_url: cfg.endpoint_url,
@@ -394,6 +401,7 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
         attio_user_email,
         theme,
         auto_sync_agenda,
+        auto_stop_minutes,
     })
 }
 
@@ -411,6 +419,7 @@ pub fn save_settings(
     attio_user_email: String,
     theme: String,
     auto_sync_agenda: bool,
+    auto_stop_minutes: i64,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     storage::set_setting(&conn, "default_language", &default_language).map_err(|e| e.to_string())?;
@@ -427,6 +436,8 @@ pub fn save_settings(
         .map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "theme", &theme).map_err(|e| e.to_string())?;
     storage::set_setting(&conn, "auto_sync_agenda", if auto_sync_agenda { "1" } else { "0" })
+        .map_err(|e| e.to_string())?;
+    storage::set_setting(&conn, "auto_stop_minutes", &auto_stop_minutes.to_string())
         .map_err(|e| e.to_string())?;
     Ok(())
 }

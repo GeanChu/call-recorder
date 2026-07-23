@@ -65,6 +65,7 @@ type Settings = {
   attio_user_email: string;
   theme: string;
   auto_sync_agenda: boolean;
+  auto_stop_minutes: number;
 };
 
 type AttioMeeting = {
@@ -90,6 +91,20 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "agenda", label: "Home" },
   { id: "gravacoes", label: "Gravações" },
   { id: "prompts", label: "Prompts de resumo" },
+];
+
+// Opções do auto-stop por tempo (em minutos).
+const AUTO_STOP_OPTIONS: { min: number; label: string }[] = [
+  { min: 15, label: "15min" },
+  { min: 30, label: "30min" },
+  { min: 60, label: "1h" },
+  { min: 120, label: "2h" },
+  { min: 180, label: "3h" },
+  { min: 240, label: "4h" },
+  { min: 300, label: "5h" },
+  { min: 360, label: "6h" },
+  { min: 720, label: "12h" },
+  { min: 1440, label: "24h" },
 ];
 
 const LANGUAGES: { code: string; label: string }[] = [
@@ -2103,6 +2118,7 @@ function ConfigScreen({
   const [icsUrl, setIcsUrl] = useState("");
   const [recordAll, setRecordAll] = useState(false);
   const [autoSyncAgenda, setAutoSyncAgenda] = useState(true);
+  const [autoStopMinutes, setAutoStopMinutes] = useState(120);
   const [autostart, setAutostart] = useState(true);
   const [theme, setTheme] = useState("system");
   const [appVersion, setAppVersion] = useState("");
@@ -2195,6 +2211,7 @@ function ConfigScreen({
       setIcsUrl(settings.ics_url);
       setRecordAll(settings.record_all);
       setAutoSyncAgenda(settings.auto_sync_agenda);
+      setAutoStopMinutes(settings.auto_stop_minutes);
       setAttioUserEmail(settings.attio_user_email);
       setTheme(settings.theme);
     }
@@ -2231,6 +2248,7 @@ function ConfigScreen({
         attioUserEmail,
         theme,
         autoSyncAgenda,
+        autoStopMinutes,
       });
       if (apiKey.trim()) {
         await invoke("set_api_key", { key: apiKey });
@@ -2486,6 +2504,28 @@ function ConfigScreen({
         />
         Iniciar o Hicorder junto com o sistema (recomendado, para gravar reuniões
         automaticamente)
+      </label>
+
+      <h3 className="cfg-section">Gravação</h3>
+      <p className="hint">Evita gravações esquecidas ligadas por muito tempo.</p>
+      <label className="chk">
+        <input
+          type="checkbox"
+          checked={autoStopMinutes > 0}
+          onChange={(e) => setAutoStopMinutes(e.target.checked ? 120 : 0)}
+        />
+        Parar a gravação automaticamente após
+        <select
+          value={autoStopMinutes > 0 ? autoStopMinutes : 120}
+          disabled={autoStopMinutes === 0}
+          onChange={(e) => setAutoStopMinutes(Number(e.target.value))}
+        >
+          {AUTO_STOP_OPTIONS.map((o) => (
+            <option key={o.min} value={o.min}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </label>
 
       <h3 className="cfg-section">Attio (CRM)</h3>

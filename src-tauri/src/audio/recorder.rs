@@ -143,6 +143,16 @@ impl Recorder {
         Ok(RecordingInfo { id })
     }
 
+    /// Segundos decorridos da gravação em andamento (0 se parado).
+    pub fn elapsed_secs(&self) -> u64 {
+        self.inner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.started.elapsed().as_secs())
+            .unwrap_or(0)
+    }
+
     /// Horas cheias de gravação ainda não avisadas — o usuário pode ter esquecido
     /// de parar. Devolve Some(horas) uma única vez por hora completada.
     pub fn should_alert_running(&self) -> Option<u32> {
