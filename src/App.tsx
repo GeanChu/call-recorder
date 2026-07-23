@@ -132,7 +132,7 @@ const STT_PROVIDERS: Provider[] = [
     label: "Groq (Whisper)",
     endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
     model: "whisper-large-v3-turbo",
-    models: ["whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en"],
+    models: ["whisper-large-v3-turbo", "whisper-large-v3"],
     keyHelp: "Chave grátis em console.groq.com/keys (Groq → API Keys → Create API Key).",
   },
   {

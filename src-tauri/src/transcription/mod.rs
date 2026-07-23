@@ -59,80 +59,144 @@ pub fn test_key(endpoint_url: &str, api_key: &str) -> Result<()> {
     bail!("provedor retornou {status}: {body}");
 }
 
-/// Muletas curtas que o Whisper costuma inventar em trechos sem fala. Só são
-/// descartadas junto de um indício de silêncio — "E aí" pode ser fala real.
-const FILLER_HALLUCINATIONS: &[&str] = &[
-    "e aí",
-    "e ai",
-    "aí",
-    "obrigado",
-    "obrigada",
-    "muito obrigado",
-    "valeu",
-    "tchau",
-    "até logo",
-    "até mais",
-    "inscreva-se",
+/// Segmento cru antes da filtragem (com as métricas do verbose_json).
+struct RawSeg {
+    start: f64,
+    text: String,
+    no_speech_prob: f64,
+    avg_logprob: f64,
+}
+
+/// Substrings que só aparecem por contaminação do treino do Whisper (créditos
+/// de legenda de YouTube etc.) — nunca são fala real de reunião. Case-insensitive.
+const ARTIFACT_SUBSTRINGS: &[&str] = &[
+    "amara.org",
+    "legendas pela comunidade",
+    "legendado pela comunidade",
+    "legenda pela comunidade",
     "inscreva-se no canal",
-    "legendas pela comunidade amara.org",
-    "legendado pela comunidade amara.org",
+    "subtitles by",
+    "subtitles by the amara",
     "thanks for watching",
-    "thank you",
-    "thank you.",
-    "subscribe",
-    "bye",
-    "you",
+    "subscribe to",
 ];
 
-/// Texto sem pontuação nas bordas e em minúsculas, para casar com a lista.
+/// Muletas curtas que o Whisper repete em silêncio.
+const FILLER_HALLUCINATIONS: &[&str] = &[
+    "e aí", "e ai", "aí", "obrigado", "obrigada", "muito obrigado", "valeu", "tchau", "até logo",
+    "até mais", "inscreva-se", "thank you", "subscribe", "bye", "you",
+];
+
+/// Texto sem pontuação nas bordas e em minúsculas.
 fn normalized(text: &str) -> String {
     text.trim()
         .trim_matches(|c: char| c.is_ascii_punctuation() || c == '…' || c.is_whitespace())
         .to_lowercase()
 }
 
-/// Heurística anti-alucinação do Whisper. Numa reunião, a faixa de cada lado
-/// fica muda enquanto o outro fala, e o modelo "preenche" o silêncio com
-/// muletas. O `verbose_json` traz, por segmento, `no_speech_prob` (chance de
-/// não haver fala) e `avg_logprob` (confiança média) — descarta o que combina
-/// indício de silêncio com baixa confiança. Provedores que não mandam esses
-/// campos caem nos defaults neutros e nada é filtrado.
-fn is_hallucination(text: &str, no_speech_prob: f64, avg_logprob: f64) -> bool {
-    if no_speech_prob > 0.6 && avg_logprob < -0.4 {
-        return true;
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().filter(|w| !w.is_empty()).count()
+}
+
+/// Remove alucinações do Whisper de uma lista de segmentos de UMA faixa.
+///
+/// Sinais (combinados, para não apagar fala real):
+/// 1. Substring de artefato de legenda → sempre descarta.
+/// 2. Repetição: uma frase curta (≤6 palavras) que aparece ≥3 vezes E ocupa
+///    ≥40% dos segmentos da faixa é o modelo "preenchendo" silêncio — descarta
+///    todas as ocorrências. Fala real numa reunião é variada.
+/// 3. Confiança: indício de silêncio (no_speech_prob) + baixa confiança
+///    (avg_logprob), quando o provedor manda essas métricas.
+fn filter_hallucinations(raw: Vec<RawSeg>) -> Vec<TranscriptSegment> {
+    let total = raw.len();
+    // Frequência das frases curtas normalizadas.
+    let mut freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for s in &raw {
+        let n = normalized(&s.text);
+        if word_count(&n) <= 6 {
+            *freq.entry(n).or_insert(0) += 1;
+        }
     }
-    no_speech_prob > 0.5 && FILLER_HALLUCINATIONS.contains(&normalized(text).as_str())
+    let repeated = |n: &str| -> bool {
+        let c = freq.get(n).copied().unwrap_or(0);
+        c >= 3 && total > 0 && c * 100 >= total * 40
+    };
+
+    raw.into_iter()
+        .filter(|s| {
+            let lower = s.text.to_lowercase();
+            let n = normalized(&s.text);
+            // 1. Artefato de legenda.
+            if ARTIFACT_SUBSTRINGS.iter().any(|a| lower.contains(a)) {
+                return false;
+            }
+            // 2. Frase curta repetida dominando a faixa.
+            if word_count(&n) <= 6 && repeated(&n) {
+                return false;
+            }
+            // 3. Silêncio + baixa confiança (métricas do provedor).
+            if s.no_speech_prob > 0.6 && s.avg_logprob < -0.4 {
+                return false;
+            }
+            // Muleta conhecida com indício de silêncio.
+            if s.no_speech_prob > 0.5 && FILLER_HALLUCINATIONS.contains(&n.as_str()) {
+                return false;
+            }
+            true
+        })
+        .map(|s| TranscriptSegment {
+            start: s.start,
+            text: s.text,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_hallucination;
+    use super::{filter_hallucinations, RawSeg};
 
-    #[test]
-    fn descarta_silencio_com_baixa_confianca() {
-        assert!(is_hallucination("E aí", 0.9, -0.8));
-        assert!(is_hallucination("Legendas pela comunidade Amara.org", 0.95, -0.6));
+    fn seg(t: &str) -> RawSeg {
+        RawSeg { start: 0.0, text: t.into(), no_speech_prob: 0.0, avg_logprob: 0.0 }
     }
 
     #[test]
-    fn descarta_muleta_curta_em_trecho_mudo() {
-        // Confiança razoável, mas forte indício de silêncio + frase-muleta.
-        assert!(is_hallucination("E aí.", 0.7, -0.2));
-        assert!(is_hallucination("Obrigado!", 0.55, -0.1));
+    fn descarta_frase_repetida_dominando_faixa() {
+        // Faixa muda: "E aí" em quase todo segmento (sem métricas confiáveis).
+        let raw: Vec<RawSeg> = (0..8).map(|_| seg("E aí")).collect();
+        assert!(filter_hallucinations(raw).is_empty());
     }
 
     #[test]
-    fn mantem_fala_real() {
-        // Mesma frase, mas com fala detectada: não pode sumir.
-        assert!(!is_hallucination("E aí", 0.05, -0.2));
-        // Frase longa com confiança boa, mesmo com no_speech_prob alto.
-        assert!(!is_hallucination("vamos fechar o valuation na semana que vem", 0.8, -0.2));
+    fn descarta_credito_de_legenda_repetido() {
+        let raw: Vec<RawSeg> = (0..5).map(|_| seg("Legenda Adriana Zanotto")).collect();
+        assert!(filter_hallucinations(raw).is_empty());
     }
 
     #[test]
-    fn sem_campos_do_provedor_nao_filtra() {
-        // Defaults neutros (0.0/0.0) quando o provedor não manda as métricas.
-        assert!(!is_hallucination("E aí", 0.0, 0.0));
+    fn descarta_artefato_amara_mesmo_sem_repetir() {
+        let raw = vec![seg("Legendas pela comunidade Amara.org")];
+        assert!(filter_hallucinations(raw).is_empty());
+    }
+
+    #[test]
+    fn mantem_fala_real_variada() {
+        let raw = vec![
+            seg("vamos fechar o valuation na semana que vem"),
+            seg("perfeito, alinho com o time"),
+            seg("E aí"), // "E aí" real, isolado, não domina → fica
+        ];
+        assert_eq!(filter_hallucinations(raw).len(), 3);
+    }
+
+    #[test]
+    fn descarta_silencio_baixa_confianca() {
+        let raw = vec![RawSeg {
+            start: 0.0,
+            text: "E aí".into(),
+            no_speech_prob: 0.9,
+            avg_logprob: -0.8,
+        }];
+        assert!(filter_hallucinations(raw).is_empty());
     }
 }
 
@@ -171,30 +235,25 @@ impl Transcriber for OpenAiCompatible {
 
         // verbose_json: array "segments" com start/text.
         if let Some(segs) = json.get("segments").and_then(|s| s.as_array()) {
-            let mut out = Vec::new();
-            let mut dropped = 0usize;
-            for s in segs {
-                let start = s.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let text = s
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let no_speech = s.get("no_speech_prob").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let logprob = s.get("avg_logprob").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                if text.is_empty() {
-                    continue;
-                }
-                if is_hallucination(&text, no_speech, logprob) {
-                    dropped += 1;
-                    continue;
-                }
-                out.push(TranscriptSegment { start, text });
-            }
-            // Só descartou = faixa era silêncio puro; devolve vazio (não é erro).
-            if !out.is_empty() || dropped > 0 {
-                return Ok(out);
+            let raw: Vec<RawSeg> = segs
+                .iter()
+                .filter_map(|s| {
+                    let text = s.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                    if text.is_empty() {
+                        return None;
+                    }
+                    Some(RawSeg {
+                        start: s.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        text,
+                        no_speech_prob: s.get("no_speech_prob").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        avg_logprob: s.get("avg_logprob").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    })
+                })
+                .collect();
+            // `segments` presente = resposta válida; devolve o filtrado mesmo se
+            // vazio (faixa era só silêncio/alucinação, não é erro).
+            if !raw.is_empty() {
+                return Ok(filter_hallucinations(raw));
             }
         }
 
