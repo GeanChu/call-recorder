@@ -82,8 +82,17 @@ pub fn summarize(
     // NVIDIA NIM tem um `max_tokens` padrão baixo e corta o resumo no meio.
     // Só para esse endpoint — outros provedores (ex.: o4-mini da OpenAI) rejeitam
     // ou interpretam `max_tokens` de forma diferente.
+    //
+    // O teto de saída varia por modelo (a própria NVIDIA sugere 8192 para o
+    // minimax-m3 e 16384 para o deepseek-v4-pro); pedir acima do teto volta 400.
+    // Folga suficiente: o resumo em si dá ~1k tokens, o resto é o raciocínio.
     if cfg.endpoint_url.contains("integrate.api.nvidia.com") {
-        body["max_tokens"] = serde_json::json!(16384);
+        let cap = if cfg.model.to_lowercase().contains("minimax") {
+            8192
+        } else {
+            16384
+        };
+        body["max_tokens"] = serde_json::json!(cap);
     }
 
     let resp = crate::net::client(180)
@@ -108,7 +117,20 @@ pub fn summarize(
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .ok_or_else(|| anyhow!("resposta sem choices[0].message.content: {raw}"))?;
-    Ok(strip_reasoning(content))
+
+    let mut out = strip_reasoning(content);
+    // `finish_reason: "length"` = bateu no teto de tokens e o texto veio cortado.
+    // Marca no proprio resumo para o corte nao passar despercebido (o usuário
+    // pode editar o resumo e/ou refazer com outro modelo).
+    let truncated = json
+        .pointer("/choices/0/finish_reason")
+        .and_then(|f| f.as_str())
+        .map(|f| f == "length")
+        .unwrap_or(false);
+    if truncated {
+        out.push_str("\n\n[Resumo truncado: o modelo atingiu o limite de tokens.]");
+    }
+    Ok(out)
 }
 
 /// Remove o raciocínio interno de modelos "reasoning" (MiniMax-M3, etc.):
