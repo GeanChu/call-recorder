@@ -10,8 +10,6 @@
 use anyhow::Result;
 
 const SERVICE: &str = "com.hicapital.hicorder";
-const TRANSCRIPTION_KEY: &str = "transcription_api_key";
-const SUMMARY_KEY: &str = "summary_api_key";
 const ATTIO_KEY: &str = "attio_api_key";
 
 // ---- macOS: arquivo protegido (sem keychain) ----
@@ -132,21 +130,16 @@ pub fn key_scope(kind: &str, endpoint_url: &str, model: &str) -> String {
     format!("{kind}:{}", host_of(&ep))
 }
 
-/// Lê a chave do escopo; se ainda não houver, cai na chave única antiga (de
-/// antes das chaves por provedor) para não quebrar quem já tinha configurado.
-fn get_scoped(scope: &str, legacy: &str) -> Result<Option<String>> {
-    if let Some(v) = get_key(scope)? {
-        return Ok(Some(v));
-    }
-    get_key(legacy)
-}
-
 // Transcrição (Groq/Whisper).
+//
+// Sem fallback para a chave única antiga: não há como saber a que provedor ela
+// pertencia, e usar um palpite mandaria a credencial de um provedor para outro.
+// Escopo vazio = sem chave; o usuário informa a chave uma vez por provedor.
 pub fn set_api_key(endpoint_url: &str, model: &str, key: &str) -> Result<()> {
     set_key(&key_scope("stt", endpoint_url, model), key)
 }
 pub fn get_api_key(endpoint_url: &str, model: &str) -> Result<Option<String>> {
-    get_scoped(&key_scope("stt", endpoint_url, model), TRANSCRIPTION_KEY)
+    get_key(&key_scope("stt", endpoint_url, model))
 }
 pub fn has_api_key(endpoint_url: &str, model: &str) -> bool {
     matches!(get_api_key(endpoint_url, model), Ok(Some(_)))
@@ -157,11 +150,16 @@ pub fn set_summary_key(endpoint_url: &str, model: &str, key: &str) -> Result<()>
     set_key(&key_scope("summary", endpoint_url, model), key)
 }
 pub fn get_summary_key(endpoint_url: &str, model: &str) -> Result<Option<String>> {
-    get_scoped(&key_scope("summary", endpoint_url, model), SUMMARY_KEY)
+    get_key(&key_scope("summary", endpoint_url, model))
 }
 pub fn has_summary_key(endpoint_url: &str, model: &str) -> bool {
     matches!(get_summary_key(endpoint_url, model), Ok(Some(_)))
 }
+
+// Nota: a chave única antiga (antes das chaves por escopo) NÃO é migrada
+// automaticamente. Não há registro de a qual provedor ela pertencia, e um
+// palpite errado enviaria a credencial de um provedor para outro. As entradas
+// antigas ficam órfãs no keychain, sem nunca serem lidas.
 
 #[cfg(test)]
 mod tests {
